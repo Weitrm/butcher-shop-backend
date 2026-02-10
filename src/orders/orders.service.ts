@@ -6,7 +6,13 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, In, Repository } from 'typeorm';
+import {
+  DataSource,
+  In,
+  MoreThanOrEqual,
+  Not,
+  Repository,
+} from 'typeorm';
 
 import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
@@ -199,6 +205,147 @@ export class OrdersService {
     });
 
     return this.mapOrderResponse(updatedOrder, true);
+  }
+
+  async getDashboardStats(paginationDto: PaginationDto) {
+    const { limit = 5, offset = 0, q: query } = paginationDto;
+    const safeLimit = Math.max(1, limit);
+    const safeOffset = Math.max(0, offset);
+
+    const now = new Date();
+    const startOfDay = new Date(now);
+    startOfDay.setHours(0, 0, 0, 0);
+
+    const startOfWeek = new Date(startOfDay);
+    const dayOfWeek = startOfWeek.getDay();
+    const diffToMonday = (dayOfWeek + 6) % 7;
+    startOfWeek.setDate(startOfWeek.getDate() - diffToMonday);
+
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const startOfLastSevenDays = new Date(now);
+    startOfLastSevenDays.setDate(startOfLastSevenDays.getDate() - 7);
+
+    const [dayCount, weekCount, monthCount] = await Promise.all([
+      this.orderRepository.count({
+        where: {
+          createdAt: MoreThanOrEqual(startOfDay),
+          status: Not(OrderStatus.Cancelled),
+        },
+      }),
+      this.orderRepository.count({
+        where: {
+          createdAt: MoreThanOrEqual(startOfWeek),
+          status: Not(OrderStatus.Cancelled),
+        },
+      }),
+      this.orderRepository.count({
+        where: {
+          createdAt: MoreThanOrEqual(startOfMonth),
+          status: Not(OrderStatus.Cancelled),
+        },
+      }),
+    ]);
+
+    const topProductsQuery = this.orderItemRepository
+      .createQueryBuilder('item')
+      .innerJoin('item.order', 'order')
+      .innerJoin('item.product', 'product')
+      .select('product.id', 'productId')
+      .addSelect('product.title', 'title')
+      .addSelect('product.slug', 'slug')
+      .addSelect('SUM(item.kg)', 'totalKg')
+      .addSelect('COUNT(DISTINCT order.id)', 'totalOrders')
+      .where('order.createdAt >= :startOfLastSevenDays', {
+        startOfLastSevenDays,
+      })
+      .andWhere('order.status != :cancelled', {
+        cancelled: OrderStatus.Cancelled,
+      });
+
+    if (query) {
+      topProductsQuery.andWhere(
+        '(product.title ILIKE :q OR product.slug ILIKE :q)',
+        { q: `%${query}%` },
+      );
+    }
+
+    const topProductsCountQuery = this.orderItemRepository
+      .createQueryBuilder('item')
+      .innerJoin('item.order', 'order')
+      .innerJoin('item.product', 'product')
+      .select('COUNT(DISTINCT product.id)', 'count')
+      .where('order.createdAt >= :startOfLastSevenDays', {
+        startOfLastSevenDays,
+      })
+      .andWhere('order.status != :cancelled', {
+        cancelled: OrderStatus.Cancelled,
+      });
+
+    if (query) {
+      topProductsCountQuery.andWhere(
+        '(product.title ILIKE :q OR product.slug ILIKE :q)',
+        { q: `%${query}%` },
+      );
+    }
+
+    const topProductsCountRaw = await topProductsCountQuery.getRawOne();
+    const totalTopProducts = Number(topProductsCountRaw?.count || 0);
+
+    const topProductsRaw = await topProductsQuery
+      .groupBy('product.id')
+      .orderBy('"totalKg"', 'DESC')
+      .limit(safeLimit)
+      .offset(safeOffset)
+      .getRawMany();
+
+    const topProducts = topProductsRaw.map((row) => ({
+      productId: row.productId,
+      title: row.title,
+      slug: row.slug,
+      totalKg: Number(row.totalKg),
+      totalOrders: Number(row.totalOrders),
+    }));
+
+    const recentOrders = await this.orderRepository.find({
+      order: { createdAt: 'DESC' },
+      take: 3,
+    });
+
+    return {
+      orderCounts: {
+        day: dayCount,
+        week: weekCount,
+        month: monthCount,
+      },
+      topProducts,
+      topProductsCount: totalTopProducts,
+      topProductsPages: Math.ceil(totalTopProducts / safeLimit),
+      recentOrders: recentOrders.map((order) => ({
+        id: order.id,
+        status: order.status,
+        totalKg: order.totalKg,
+        totalPrice: order.totalPrice,
+        createdAt: order.createdAt,
+        user: order.user
+          ? {
+              id: order.user.id,
+              fullName: order.user.fullName,
+              email: order.user.email,
+            }
+          : null,
+        items: (order.items || []).map((item) => ({
+          id: item.id,
+          kg: item.kg,
+          product: item.product
+            ? {
+                id: item.product.id,
+                title: item.product.title,
+                slug: item.product.slug,
+              }
+            : null,
+        })),
+      })),
+    };
   }
 
   private mapOrderResponse(order: Order | null, includeUser = false) {

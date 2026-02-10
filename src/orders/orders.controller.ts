@@ -33,6 +33,13 @@ export class OrdersController {
     return this.ordersService.findCurrentByUser(user);
   }
 
+  @Get('admin/dashboard')
+  @Auth(ValidRoles.admin)
+  @ApiResponse({ status: 200, description: 'Orders dashboard stats' })
+  getDashboardStats(@Query() paginationDto: PaginationDto) {
+    return this.ordersService.getDashboardStats(paginationDto);
+  }
+
   @Get('admin')
   @Auth(ValidRoles.admin)
   @ApiResponse({ status: 200, description: 'Orders list (admin)' })
