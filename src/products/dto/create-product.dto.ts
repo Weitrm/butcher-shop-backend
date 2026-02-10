@@ -1,6 +1,13 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsArray, IsInt, IsNumber, IsOptional, 
-         IsPositive, IsString, MinLength 
+import {
+  IsArray,
+  IsBoolean,
+  IsInt,
+  IsNumber,
+  IsOptional,
+  IsPositive,
+  IsString,
+  MinLength,
 } from 'class-validator';
 
 
@@ -42,6 +49,11 @@ export class CreateProductDto {
     @IsArray()
     @IsOptional()
     images?: string[];
+
+    @ApiProperty()
+    @IsBoolean()
+    @IsOptional()
+    isActive?: boolean;
 
 
 }

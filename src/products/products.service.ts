@@ -59,7 +59,7 @@ export class ProductsService {
     }
   }
 
-  async findAll(paginationDto: PaginationDto) {
+  async findAll(paginationDto: PaginationDto, includeInactive = false) {
     const {
       limit = 10,
       offset = 0,
@@ -89,6 +89,7 @@ export class ProductsService {
       where: {
         price: priceWhere,
         title: query ? ILike(`%${query}%`) : undefined,
+        isActive: includeInactive ? undefined : true,
       },
     });
 
@@ -96,6 +97,7 @@ export class ProductsService {
       where: {
         price: priceWhere,
         title: query ? ILike(`%${query}%`) : undefined,
+        isActive: includeInactive ? undefined : true,
       },
     });
 
@@ -109,18 +111,27 @@ export class ProductsService {
     };
   }
 
-  async findOne(term: string) {
+  async findOne(term: string, onlyActive = false) {
     let product: Product;
 
     if (isUUID(term)) {
-      product = await this.productRepository.findOneBy({ id: term });
+      const where: { id: string; isActive?: boolean } = { id: term };
+      if (onlyActive) {
+        where.isActive = true;
+      }
+      product = await this.productRepository.findOneBy(where);
     } else {
       const queryBuilder = this.productRepository.createQueryBuilder('prod');
+      queryBuilder.where('UPPER(title) =:title or slug =:slug', {
+        title: term.toUpperCase(),
+        slug: term.toLowerCase(),
+      });
+
+      if (onlyActive) {
+        queryBuilder.andWhere('prod.isActive = :isActive', { isActive: true });
+      }
+
       product = await queryBuilder
-        .where('UPPER(title) =:title or slug =:slug', {
-          title: term.toUpperCase(),
-          slug: term.toLowerCase(),
-        })
         .leftJoinAndSelect('prod.images', 'prodImages')
         .getOne();
     }
@@ -130,8 +141,8 @@ export class ProductsService {
     return product;
   }
 
-  async findOnePlain(term: string) {
-    const { images = [], ...rest } = await this.findOne(term);
+  async findOnePlain(term: string, onlyActive = false) {
+    const { images = [], ...rest } = await this.findOne(term, onlyActive);
     return {
       ...rest,
       images: images.map((image) => image.url),

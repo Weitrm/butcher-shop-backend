@@ -71,6 +71,12 @@ export class OrdersService {
         throw new NotFoundException(`Producto ${item.productId} no encontrado`);
       }
 
+      if (!product.isActive) {
+        throw new BadRequestException(
+          `El producto ${product.title} no esta disponible`,
+        );
+      }
+
       if (product.stock < item.kg) {
         throw new BadRequestException(
           `Stock insuficiente para ${product.title}`,

@@ -65,6 +65,16 @@ export class Product {
     })
     stock: number;
 
+    @ApiProperty({
+        example: true,
+        description: 'Product availability status',
+        default: true
+    })
+    @Column('bool', {
+        default: true
+    })
+    isActive: boolean;
+
     // images
     @ApiProperty()
     @OneToMany(

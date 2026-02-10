@@ -45,9 +45,21 @@ export class ProductsController {
     return this.productsService.findAll(paginationDto);
   }
 
+  @Get('admin')
+  @Auth(ValidRoles.admin)
+  findAllAdmin(@Query() paginationDto: PaginationDto) {
+    return this.productsService.findAll(paginationDto, true);
+  }
+
+  @Get('admin/:term')
+  @Auth(ValidRoles.admin)
+  findOneAdmin(@Param('term') term: string) {
+    return this.productsService.findOnePlain(term);
+  }
+
   @Get(':term')
   findOne(@Param('term') term: string) {
-    return this.productsService.findOnePlain(term);
+    return this.productsService.findOnePlain(term, true);
   }
 
   @Patch(':id')
