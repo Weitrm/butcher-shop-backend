@@ -20,8 +20,8 @@ async function bootstrap() {
   );
 
   const config = new DocumentBuilder()
-    .setTitle('Teslo RESTFul API')
-    .setDescription('Teslo shop endpoints')
+    .setTitle('Butcher RESTFul API')
+    .setDescription('Butcher shop endpoints')
     .setVersion('1.0')
     .build();
   const document = SwaggerModule.createDocument(app, config);

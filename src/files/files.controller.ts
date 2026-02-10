@@ -14,6 +14,7 @@ import { FileInterceptor } from '@nestjs/platform-express';
 
 import { Response } from 'express';
 import { diskStorage } from 'multer';
+import { join } from 'path';
 import { FilesService } from './files.service';
 
 import { fileFilter, fileNamer } from './helpers';
@@ -42,7 +43,7 @@ export class FilesController {
       fileFilter: fileFilter,
       // limits: { fileSize: 1000 }
       storage: diskStorage({
-        destination: './static/products',
+        destination: join(process.cwd(), 'static/products'),
         filename: fileNamer,
       }),
     }),
