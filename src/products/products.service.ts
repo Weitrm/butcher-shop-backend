@@ -66,7 +66,16 @@ export class ProductsService {
       minPrice,
       maxPrice,
       q: query,
+      isActive,
     } = paginationDto;
+
+    const activeFilter = includeInactive
+      ? isActive === 'true'
+        ? true
+        : isActive === 'false'
+        ? false
+        : undefined
+      : true;
 
     const priceWhere =
       minPrice !== undefined && maxPrice !== undefined
@@ -89,7 +98,7 @@ export class ProductsService {
       where: {
         price: priceWhere,
         title: query ? ILike(`%${query}%`) : undefined,
-        isActive: includeInactive ? undefined : true,
+        isActive: activeFilter,
       },
     });
 
@@ -97,7 +106,7 @@ export class ProductsService {
       where: {
         price: priceWhere,
         title: query ? ILike(`%${query}%`) : undefined,
-        isActive: includeInactive ? undefined : true,
+        isActive: activeFilter,
       },
     });
 

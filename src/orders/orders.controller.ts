@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Patch, Param, ParseUUIDPipe, Post } from '@nestjs/common';
+import { Body, Controller, Get, Patch, Param, ParseUUIDPipe, Post, Query } from '@nestjs/common';
 import { ApiResponse, ApiTags } from '@nestjs/swagger';
 
 import { OrdersService } from './orders.service';
@@ -7,6 +7,7 @@ import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
 import { Auth, GetUser } from '../auth/decorators';
 import { User } from '../auth/entities/user.entity';
 import { ValidRoles } from '../auth/interfaces';
+import { PaginationDto } from '../common/dtos/pagination.dto';
 
 @ApiTags('Orders')
 @Controller('orders')
@@ -22,8 +23,8 @@ export class OrdersController {
 
   @Get()
   @ApiResponse({ status: 200, description: 'Orders list' })
-  findAll(@GetUser() user: User) {
-    return this.ordersService.findAllByUser(user);
+  findAll(@GetUser() user: User, @Query() paginationDto: PaginationDto) {
+    return this.ordersService.findAllByUser(user, paginationDto);
   }
 
   @Get('current')
@@ -35,8 +36,8 @@ export class OrdersController {
   @Get('admin')
   @Auth(ValidRoles.admin)
   @ApiResponse({ status: 200, description: 'Orders list (admin)' })
-  findAllAdmin() {
-    return this.ordersService.findAllAdmin();
+  findAllAdmin(@Query() paginationDto: PaginationDto) {
+    return this.ordersService.findAllAdmin(paginationDto);
   }
 
   @Patch(':id/status')

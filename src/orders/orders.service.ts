@@ -13,6 +13,7 @@ import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
 import { Order, OrderItem, OrderStatus } from './entities';
 import { Product } from '../products/entities';
 import { User } from '../auth/entities/user.entity';
+import { PaginationDto } from '../common/dtos/pagination.dto';
 
 const MAX_TOTAL_KG = 10;
 const MAX_ITEMS = 2;
@@ -135,13 +136,20 @@ export class OrdersService {
     }
   }
 
-  async findAllByUser(user: User) {
-    const orders = await this.orderRepository.find({
+  async findAllByUser(user: User, paginationDto: PaginationDto) {
+    const { limit = 10, offset = 0 } = paginationDto;
+    const [orders, totalOrders] = await this.orderRepository.findAndCount({
       where: { user: { id: user.id } },
       order: { createdAt: 'DESC' },
+      take: limit,
+      skip: offset,
     });
 
-    return orders.map((order) => this.mapOrderResponse(order));
+    return {
+      count: totalOrders,
+      pages: Math.ceil(totalOrders / limit),
+      orders: orders.map((order) => this.mapOrderResponse(order)),
+    };
   }
 
   async findCurrentByUser(user: User) {
@@ -157,12 +165,19 @@ export class OrdersService {
     return this.mapOrderResponse(order);
   }
 
-  async findAllAdmin() {
-    const orders = await this.orderRepository.find({
+  async findAllAdmin(paginationDto: PaginationDto) {
+    const { limit = 10, offset = 0 } = paginationDto;
+    const [orders, totalOrders] = await this.orderRepository.findAndCount({
       order: { createdAt: 'DESC' },
+      take: limit,
+      skip: offset,
     });
 
-    return orders.map((order) => this.mapOrderResponse(order, true));
+    return {
+      count: totalOrders,
+      pages: Math.ceil(totalOrders / limit),
+      orders: orders.map((order) => this.mapOrderResponse(order, true)),
+    };
   }
 
   async updateStatus(id: string, updateOrderStatusDto: UpdateOrderStatusDto) {

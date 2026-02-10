@@ -1,7 +1,7 @@
 import { ApiProperty } from '@nestjs/swagger';
 
 import { Type } from 'class-transformer';
-import { IsOptional, IsPositive, Min } from 'class-validator';
+import { IsIn, IsOptional, IsPositive, Min } from 'class-validator';
 
 export class PaginationDto {
   @ApiProperty({
@@ -50,4 +50,13 @@ export class PaginationDto {
   @IsOptional()
   @Type(() => String)
   q?: string;
+
+  @ApiProperty({
+    required: false,
+    description: 'Estado del producto para filtrar resultados',
+    example: 'true',
+  })
+  @IsOptional()
+  @IsIn(['true', 'false'])
+  isActive?: string;
 }
