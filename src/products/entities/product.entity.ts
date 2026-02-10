@@ -65,13 +65,6 @@ export class Product {
     })
     stock: number;
 
-    @ApiProperty()
-    @Column('text', {
-        array: true,
-        default: []
-    })
-    tags: string[];
-
     // images
     @ApiProperty()
     @OneToMany(

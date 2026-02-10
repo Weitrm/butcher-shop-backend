@@ -1,5 +1,6 @@
 import { BeforeInsert, BeforeUpdate, Column, Entity, OneToMany, PrimaryGeneratedColumn } from 'typeorm';
 import { Product } from '../../products/entities';
+import { Order } from '../../orders/entities/order.entity';
 
 
 @Entity('users')
@@ -37,6 +38,12 @@ export class User {
         ( product ) => product.user
     )
     product: Product;
+
+    @OneToMany(
+        () => Order,
+        ( order ) => order.user
+    )
+    orders: Order[];
 
 
     @BeforeInsert()

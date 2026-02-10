@@ -8,6 +8,7 @@ import {
   BadRequestException,
   Res,
 } from '@nestjs/common';
+import { existsSync, mkdirSync } from 'fs';
 import { ConfigService } from '@nestjs/config';
 import { ApiTags } from '@nestjs/swagger';
 import { FileInterceptor } from '@nestjs/platform-express';
@@ -18,6 +19,11 @@ import { join } from 'path';
 import { FilesService } from './files.service';
 
 import { fileFilter, fileNamer } from './helpers';
+
+const PRODUCT_IMAGES_PATH = join(__dirname, '..', '..', 'static', 'products');
+if (!existsSync(PRODUCT_IMAGES_PATH)) {
+  mkdirSync(PRODUCT_IMAGES_PATH, { recursive: true });
+}
 
 @ApiTags('Files - Get and Upload')
 @Controller('files')
@@ -43,7 +49,7 @@ export class FilesController {
       fileFilter: fileFilter,
       // limits: { fileSize: 1000 }
       storage: diskStorage({
-        destination: join(process.cwd(), 'static/products'),
+        destination: PRODUCT_IMAGES_PATH,
         filename: fileNamer,
       }),
     }),
