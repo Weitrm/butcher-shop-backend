@@ -181,7 +181,7 @@ export class OrdersService {
 
     if (user) {
       queryBuilder.andWhere(
-        '(user.fullName ILIKE :user OR user.email ILIKE :user)',
+        '(user.fullName ILIKE :user OR user.employeeNumber ILIKE :user OR user.nationalId ILIKE :user)',
         { user: `%${user}%` },
       );
     }
@@ -486,7 +486,8 @@ export class OrdersService {
           ? {
               id: order.user.id,
               fullName: order.user.fullName,
-              email: order.user.email,
+              employeeNumber: order.user.employeeNumber,
+              nationalId: order.user.nationalId,
             }
           : null,
         items: (order.items || []).map((item) => ({
@@ -512,7 +513,8 @@ export class OrdersService {
       ? {
           id: user.id,
           fullName: user.fullName,
-          email: user.email,
+          employeeNumber: user.employeeNumber,
+          nationalId: user.nationalId,
         }
       : undefined;
 

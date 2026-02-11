@@ -12,7 +12,12 @@ export class User {
     @Column('text', {
         unique: true
     })
-    email: string;
+    employeeNumber: string;
+
+    @Column('text', {
+        unique: true
+    })
+    nationalId: string;
 
     @Column('text', {
         select: false
@@ -48,7 +53,9 @@ export class User {
 
     @BeforeInsert()
     checkFieldsBeforeInsert() {
-        this.email = this.email.toLowerCase().trim();
+        this.employeeNumber = this.employeeNumber?.trim();
+        this.nationalId = this.nationalId?.trim();
+        this.fullName = this.fullName?.trim();
     }
 
     @BeforeUpdate()

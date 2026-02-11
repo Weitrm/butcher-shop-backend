@@ -21,6 +21,7 @@ export class AuthController {
 
 
   @Post('register')
+  @Auth( ValidRoles.admin )
   createUser(@Body() createUserDto: CreateUserDto ) {
     return this.authService.create( createUserDto );
   }
@@ -38,13 +39,19 @@ export class AuthController {
     return this.authService.checkAuthStatus( user );
   }
 
+  @Get('users')
+  @Auth( ValidRoles.admin )
+  findAllUsers() {
+    return this.authService.findAll();
+  }
+
 
   @Get('private')
   @UseGuards( AuthGuard() )
   testingPrivateRoute(
     @Req() request: Express.Request,
     @GetUser() user: User,
-    @GetUser('email') userEmail: string,
+    @GetUser('employeeNumber') userEmployeeNumber: string,
     
     @RawHeaders() rawHeaders: string[],
     @Headers() headers: IncomingHttpHeaders,
@@ -55,7 +62,7 @@ export class AuthController {
       ok: true,
       message: 'Hola Mundo Private',
       user,
-      userEmail,
+      userEmployeeNumber,
       rawHeaders,
       headers
     }

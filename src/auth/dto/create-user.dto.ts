@@ -1,18 +1,24 @@
-import { IsEmail, IsString, Matches, MaxLength, MinLength } from 'class-validator';
+import { IsString, Matches, MaxLength, MinLength } from 'class-validator';
 
 
 export class CreateUserDto {
 
     @IsString()
-    @IsEmail()
-    email: string;
+    @MinLength(1)
+    @MaxLength(20)
+    employeeNumber: string;
+
+    @IsString()
+    @MinLength(1)
+    @MaxLength(20)
+    nationalId: string;
 
     @IsString()
     @MinLength(6)
-    @MaxLength(50)
+    @MaxLength(20)
     @Matches(
-        /(?:(?=.*\d)|(?=.*\W+))(?![.\n])(?=.*[A-Z])(?=.*[a-z]).*$/, {
-        message: 'The password must have a Uppercase, lowercase letter and a number'
+        /^\d+$/, {
+        message: 'The password must contain only numbers'
     })
     password: string;
 

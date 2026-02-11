@@ -11,7 +11,8 @@ interface SeedProduct {
 
 
 interface SeedUser {
-    email:    string;
+    employeeNumber: string;
+    nationalId: string;
     fullName: string;
     password: string;
     roles:     string[];
@@ -28,15 +29,17 @@ export const initialData: SeedData = {
 
     users: [
         {
-            email: 'test1@google.com',
+            employeeNumber: '1001',
+            nationalId: '12345678',
             fullName: 'Test One',
-            password: bcrypt.hashSync( 'Abc123', 10 ),
+            password: bcrypt.hashSync( '12345678', 10 ),
             roles: ['admin']
         },
         {
-            email: 'test2@google.com',
+            employeeNumber: '1002',
+            nationalId: '87654321',
             fullName: 'Test Two',
-            password: bcrypt.hashSync( 'Abc123', 10 ),
+            password: bcrypt.hashSync( '87654321', 10 ),
             roles: ['user','super']
         }
     ],
