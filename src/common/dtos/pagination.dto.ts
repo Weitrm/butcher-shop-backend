@@ -59,4 +59,13 @@ export class PaginationDto {
   @IsOptional()
   @IsIn(['true', 'false'])
   isActive?: string;
+
+  @ApiProperty({
+    required: false,
+    description: 'Rango para estadisticas del dashboard',
+    example: 'week',
+  })
+  @IsOptional()
+  @IsIn(['week', 'month', 'year'])
+  range?: string;
 }

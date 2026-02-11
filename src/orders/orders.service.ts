@@ -16,6 +16,7 @@ import {
 
 import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
+import { OrdersQueryDto } from './dto/orders-query.dto';
 import { Order, OrderItem, OrderStatus } from './entities';
 import { Product } from '../products/entities';
 import { User } from '../auth/entities/user.entity';
@@ -107,16 +108,7 @@ export class OrdersService {
       throw new BadRequestException('El total no puede superar los 10 kg');
     }
 
-    const queryRunner = this.dataSource.createQueryRunner();
-    await queryRunner.connect();
-    await queryRunner.startTransaction();
-
     try {
-      for (const item of orderItems) {
-        item.product.stock = item.product.stock - item.kg;
-        await queryRunner.manager.save(item.product);
-      }
-
       const order = this.orderRepository.create({
         user,
         items: orderItems,
@@ -125,10 +117,7 @@ export class OrdersService {
         status: OrderStatus.Pending,
       });
 
-      const savedOrder = await queryRunner.manager.save(order);
-
-      await queryRunner.commitTransaction();
-      await queryRunner.release();
+      const savedOrder = await this.orderRepository.save(order);
 
       const fullOrder = await this.orderRepository.findOne({
         where: { id: savedOrder.id, user: { id: user.id } },
@@ -136,8 +125,6 @@ export class OrdersService {
 
       return this.mapOrderResponse(fullOrder);
     } catch (error) {
-      await queryRunner.rollbackTransaction();
-      await queryRunner.release();
       this.handleDBExceptions(error);
     }
   }
@@ -158,72 +145,186 @@ export class OrdersService {
     };
   }
 
-  async findCurrentByUser(user: User) {
-    const order = await this.orderRepository.findOne({
-      where: { user: { id: user.id }, status: OrderStatus.Pending },
-      order: { createdAt: 'DESC' },
-    });
+  async findAllAdmin(queryDto: OrdersQueryDto) {
+    const {
+      limit = 10,
+      offset = 0,
+      scope = 'all',
+      user,
+      product,
+    } = queryDto;
+    const safeLimit = Math.max(1, limit);
+    const safeOffset = Math.max(0, offset);
 
-    if (!order) {
-      throw new NotFoundException('No hay pedido actual');
+    const queryBuilder = this.orderRepository
+      .createQueryBuilder('order')
+      .leftJoinAndSelect('order.user', 'user')
+      .leftJoinAndSelect('order.items', 'item')
+      .leftJoinAndSelect('item.product', 'product')
+      .orderBy('order.createdAt', 'DESC')
+      .distinct(true)
+      .take(safeLimit)
+      .skip(safeOffset);
+
+    if (scope === 'week' || scope === 'history') {
+      const startOfWeek = this.getStartOfWeek();
+      if (scope === 'week') {
+        queryBuilder.andWhere('order.createdAt >= :startOfWeek', {
+          startOfWeek,
+        });
+      } else {
+        queryBuilder.andWhere('order.createdAt < :startOfWeek', {
+          startOfWeek,
+        });
+      }
     }
 
-    return this.mapOrderResponse(order);
-  }
+    if (user) {
+      queryBuilder.andWhere(
+        '(user.fullName ILIKE :user OR user.email ILIKE :user)',
+        { user: `%${user}%` },
+      );
+    }
 
-  async findAllAdmin(paginationDto: PaginationDto) {
-    const { limit = 10, offset = 0 } = paginationDto;
-    const [orders, totalOrders] = await this.orderRepository.findAndCount({
-      order: { createdAt: 'DESC' },
-      take: limit,
-      skip: offset,
-    });
+    if (product) {
+      queryBuilder.andWhere(
+        '(product.title ILIKE :product OR product.slug ILIKE :product)',
+        { product: `%${product}%` },
+      );
+    }
+
+    const [orders, totalOrders] = await queryBuilder.getManyAndCount();
 
     return {
       count: totalOrders,
-      pages: Math.ceil(totalOrders / limit),
+      pages: Math.ceil(totalOrders / safeLimit),
       orders: orders.map((order) => this.mapOrderResponse(order, true)),
     };
   }
 
   async updateStatus(id: string, updateOrderStatusDto: UpdateOrderStatusDto) {
-    const order = await this.orderRepository.findOne({
-      where: { id },
-    });
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
 
-    if (!order) {
-      throw new NotFoundException(`Pedido con id ${id} no encontrado`);
+    try {
+      const order = await queryRunner.manager.findOne(Order, {
+        where: { id },
+        relations: {
+          items: {
+            product: true,
+          },
+        },
+      });
+
+      if (!order) {
+        throw new NotFoundException(`Pedido con id ${id} no encontrado`);
+      }
+
+      const nextStatus = updateOrderStatusDto.status;
+
+      if (order.status === nextStatus) {
+        await queryRunner.rollbackTransaction();
+        await queryRunner.release();
+        return this.mapOrderResponse(order, true);
+      }
+
+      if (
+        order.status === OrderStatus.Completed &&
+        nextStatus !== OrderStatus.Completed
+      ) {
+        throw new BadRequestException(
+          'No se puede cambiar un pedido completado',
+        );
+      }
+
+      if (nextStatus === OrderStatus.Completed) {
+        for (const item of order.items || []) {
+          if (!item.product) {
+            throw new BadRequestException('Producto no encontrado en el pedido');
+          }
+          const product = await queryRunner.manager.findOne(Product, {
+            where: { id: item.product.id },
+          });
+          if (!product) {
+            throw new BadRequestException('Producto no encontrado en el pedido');
+          }
+          if (product.stock < item.kg) {
+            throw new BadRequestException(
+              `Stock insuficiente para ${item.product.title}`,
+            );
+          }
+        }
+
+        for (const item of order.items || []) {
+          const product = await queryRunner.manager.findOne(Product, {
+            where: { id: item.product.id },
+          });
+          if (!product) {
+            throw new BadRequestException('Producto no encontrado en el pedido');
+          }
+          product.stock = product.stock - item.kg;
+          await queryRunner.manager.save(product);
+        }
+      }
+
+      order.status = nextStatus;
+      const updatedOrder = await queryRunner.manager.save(order);
+
+      await queryRunner.commitTransaction();
+      await queryRunner.release();
+
+      return this.mapOrderResponse(updatedOrder, true);
+    } catch (error) {
+      await queryRunner.rollbackTransaction();
+      await queryRunner.release();
+      if (
+        error instanceof BadRequestException ||
+        error instanceof NotFoundException
+      ) {
+        throw error;
+      }
+      this.handleDBExceptions(error);
     }
-
-    await this.orderRepository.update(
-      { id },
-      { status: updateOrderStatusDto.status },
-    );
-
-    const updatedOrder = await this.orderRepository.findOne({
-      where: { id },
-    });
-
-    return this.mapOrderResponse(updatedOrder, true);
   }
 
   async getDashboardStats(paginationDto: PaginationDto) {
-    const { limit = 5, offset = 0, q: query } = paginationDto;
+    const { limit = 5, offset = 0, q: query, range = 'week' } = paginationDto;
     const safeLimit = Math.max(1, limit);
     const safeOffset = Math.max(0, offset);
+    const safeRange =
+      range === 'month' || range === 'year' || range === 'week'
+        ? range
+        : 'week';
 
     const now = new Date();
     const startOfDay = new Date(now);
     startOfDay.setHours(0, 0, 0, 0);
 
-    const startOfWeek = new Date(startOfDay);
-    const dayOfWeek = startOfWeek.getDay();
-    const diffToMonday = (dayOfWeek + 6) % 7;
-    startOfWeek.setDate(startOfWeek.getDate() - diffToMonday);
+    const startOfWeek = this.getStartOfWeek();
 
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
     const startOfLastSevenDays = new Date(now);
-    startOfLastSevenDays.setDate(startOfLastSevenDays.getDate() - 7);
+    startOfLastSevenDays.setHours(0, 0, 0, 0);
+    startOfLastSevenDays.setDate(startOfLastSevenDays.getDate() - 6);
+
+    let activityStart = new Date(now);
+    let activityUnit: 'day' | 'month' = 'day';
+    let activityPoints = 7;
+
+    if (safeRange === 'month') {
+      activityPoints = 30;
+      activityStart = new Date(now);
+      activityStart.setHours(0, 0, 0, 0);
+      activityStart.setDate(activityStart.getDate() - (activityPoints - 1));
+    } else if (safeRange === 'year') {
+      activityUnit = 'month';
+      activityPoints = 12;
+      activityStart = new Date(now.getFullYear(), now.getMonth(), 1);
+      activityStart.setMonth(activityStart.getMonth() - (activityPoints - 1));
+    } else {
+      activityStart = new Date(startOfLastSevenDays);
+    }
 
     const [dayCount, weekCount, monthCount] = await Promise.all([
       this.orderRepository.count({
@@ -306,6 +407,60 @@ export class OrdersService {
       totalOrders: Number(row.totalOrders),
     }));
 
+    const activityRaw = await this.orderRepository
+      .createQueryBuilder('order')
+      .select(`DATE_TRUNC('${activityUnit}', order.createdAt)`, 'bucket')
+      .addSelect('SUM(order.totalKg)', 'totalKg')
+      .addSelect('COUNT(order.id)', 'totalOrders')
+      .where('order.createdAt >= :activityStart', { activityStart })
+      .andWhere('order.status != :cancelled', {
+        cancelled: OrderStatus.Cancelled,
+      })
+      .groupBy('bucket')
+      .orderBy('bucket', 'ASC')
+      .getRawMany();
+
+    const activityMap = new Map<
+      string,
+      { totalKg: number; totalOrders: number }
+    >();
+
+    activityRaw.forEach((row) => {
+      const bucketValue =
+        row.bucket instanceof Date ? row.bucket : new Date(row.bucket);
+      const bucketKey =
+        activityUnit === 'day'
+          ? this.formatDateKey(bucketValue)
+          : this.formatMonthKey(bucketValue);
+      activityMap.set(bucketKey, {
+        totalKg: Number(row.totalKg || 0),
+        totalOrders: Number(row.totalOrders || 0),
+      });
+    });
+
+    const activity = Array.from({ length: activityPoints }, (_, index) => {
+      const bucketDate = new Date(activityStart);
+      if (activityUnit === 'day') {
+        bucketDate.setDate(activityStart.getDate() + index);
+      } else {
+        bucketDate.setMonth(activityStart.getMonth() + index);
+      }
+
+      const bucketKey =
+        activityUnit === 'day'
+          ? this.formatDateKey(bucketDate)
+          : this.formatMonthKey(bucketDate);
+      const bucketStats = activityMap.get(bucketKey) || {
+        totalKg: 0,
+        totalOrders: 0,
+      };
+
+      return {
+        date: bucketKey,
+        ...bucketStats,
+      };
+    });
+
     const recentOrders = await this.orderRepository.find({
       order: { createdAt: 'DESC' },
       take: 3,
@@ -317,6 +472,7 @@ export class OrdersService {
         week: weekCount,
         month: monthCount,
       },
+      activity,
       topProducts,
       topProductsCount: totalTopProducts,
       topProductsPages: Math.ceil(totalTopProducts / safeLimit),
@@ -385,5 +541,27 @@ export class OrdersService {
     throw new InternalServerErrorException(
       'Unexpected error, check server logs',
     );
+  }
+
+  private getStartOfWeek(reference = new Date()) {
+    const startOfWeek = new Date(reference);
+    startOfWeek.setHours(0, 0, 0, 0);
+    const dayOfWeek = startOfWeek.getDay();
+    const diffToMonday = (dayOfWeek + 6) % 7;
+    startOfWeek.setDate(startOfWeek.getDate() - diffToMonday);
+    return startOfWeek;
+  }
+
+  private formatDateKey(date: Date) {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  }
+
+  private formatMonthKey(date: Date) {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    return `${year}-${month}`;
   }
 }

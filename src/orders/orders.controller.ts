@@ -4,6 +4,7 @@ import { ApiResponse, ApiTags } from '@nestjs/swagger';
 import { OrdersService } from './orders.service';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
+import { OrdersQueryDto } from './dto/orders-query.dto';
 import { Auth, GetUser } from '../auth/decorators';
 import { User } from '../auth/entities/user.entity';
 import { ValidRoles } from '../auth/interfaces';
@@ -27,12 +28,6 @@ export class OrdersController {
     return this.ordersService.findAllByUser(user, paginationDto);
   }
 
-  @Get('current')
-  @ApiResponse({ status: 200, description: 'Current order' })
-  findCurrent(@GetUser() user: User) {
-    return this.ordersService.findCurrentByUser(user);
-  }
-
   @Get('admin/dashboard')
   @Auth(ValidRoles.admin)
   @ApiResponse({ status: 200, description: 'Orders dashboard stats' })
@@ -43,8 +38,8 @@ export class OrdersController {
   @Get('admin')
   @Auth(ValidRoles.admin)
   @ApiResponse({ status: 200, description: 'Orders list (admin)' })
-  findAllAdmin(@Query() paginationDto: PaginationDto) {
-    return this.ordersService.findAllAdmin(paginationDto);
+  findAllAdmin(@Query() queryDto: OrdersQueryDto) {
+    return this.ordersService.findAllAdmin(queryDto);
   }
 
   @Patch(':id/status')
