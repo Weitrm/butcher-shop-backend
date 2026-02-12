@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, UseGuards, Req, Headers, SetMetadata } from '@nestjs/common';
+import { Controller, Get, Post, Body, UseGuards, Req, Headers, SetMetadata, Patch, Param, ParseUUIDPipe, Delete } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { ApiTags } from '@nestjs/swagger';
 
@@ -8,7 +8,7 @@ import { AuthService } from './auth.service';
 import { RawHeaders, GetUser, Auth } from './decorators';
 import { RoleProtected } from './decorators/role-protected.decorator';
 
-import { CreateUserDto, LoginUserDto } from './dto';
+import { CreateUserDto, LoginUserDto, UpdateUserStatusDto, UpdateUserPasswordDto } from './dto';
 import { User } from './entities/user.entity';
 import { UserRoleGuard } from './guards/user-role.guard';
 import { ValidRoles } from './interfaces';
@@ -43,6 +43,30 @@ export class AuthController {
   @Auth( ValidRoles.admin )
   findAllUsers() {
     return this.authService.findAll();
+  }
+
+  @Patch('users/:id/status')
+  @Auth(ValidRoles.admin)
+  updateUserStatus(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() updateUserStatusDto: UpdateUserStatusDto,
+  ) {
+    return this.authService.updateStatus(id, updateUserStatusDto.isActive);
+  }
+
+  @Patch('users/:id/password')
+  @Auth(ValidRoles.admin)
+  updateUserPassword(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() updateUserPasswordDto: UpdateUserPasswordDto,
+  ) {
+    return this.authService.updatePassword(id, updateUserPasswordDto.password);
+  }
+
+  @Delete('users/:id')
+  @Auth(ValidRoles.admin)
+  removeUser(@Param('id', ParseUUIDPipe) id: string) {
+    return this.authService.removeUser(id);
   }
 
 

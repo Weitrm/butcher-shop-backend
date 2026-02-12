@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   InternalServerErrorException,
   Logger,
@@ -44,6 +45,12 @@ export class OrdersService {
 
   async create(createOrderDto: CreateOrderDto, user: User) {
     const { items } = createOrderDto;
+
+    if (!user.isActive) {
+      throw new ForbiddenException(
+        'Tu cuenta esta deshabilitada para hacer pedidos. Comunicate con un supervisor',
+      );
+    }
 
     if (!items?.length) {
       throw new BadRequestException('El pedido debe contener productos');

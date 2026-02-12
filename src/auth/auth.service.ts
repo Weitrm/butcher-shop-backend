@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, InternalServerErrorException, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, Injectable, InternalServerErrorException, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -83,6 +83,51 @@ export class AuthService {
     return this.userRepository.find({
       order: { fullName: 'ASC' },
     });
+  }
+
+  async updateStatus(userId: string, isActive: boolean) {
+    const user = await this.userRepository.findOneBy({ id: userId });
+    if (!user) {
+      throw new NotFoundException(`Usuario con id ${userId} no encontrado`);
+    }
+
+    user.isActive = isActive;
+    await this.userRepository.save(user);
+
+    return user;
+  }
+
+  async updatePassword(userId: string, password: string) {
+    const user = await this.userRepository.findOneBy({ id: userId });
+    if (!user) {
+      throw new NotFoundException(`Usuario con id ${userId} no encontrado`);
+    }
+
+    user.password = bcrypt.hashSync(password, 10);
+    await this.userRepository.save(user);
+
+    delete user.password;
+    return user;
+  }
+
+  async removeUser(userId: string) {
+    const user = await this.userRepository.findOneBy({ id: userId });
+    if (!user) {
+      throw new NotFoundException(`Usuario con id ${userId} no encontrado`);
+    }
+
+    try {
+      await this.userRepository.remove(user);
+    } catch (error) {
+      if (error?.code === '23503') {
+        throw new BadRequestException(
+          'No se puede eliminar un usuario con pedidos o productos asociados',
+        );
+      }
+      this.handleDBErrors(error);
+    }
+
+    return { id: userId };
   }
 
 
