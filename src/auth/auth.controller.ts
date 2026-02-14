@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, UseGuards, Req, Headers, SetMetadata, Patch, Param, ParseUUIDPipe, Delete } from '@nestjs/common';
+﻿import { Controller, Get, Post, Body, UseGuards, Req, Headers, SetMetadata, Patch, Param, ParseUUIDPipe, Delete } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { ApiTags } from '@nestjs/swagger';
 
@@ -50,8 +50,9 @@ export class AuthController {
   updateUserStatus(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() updateUserStatusDto: UpdateUserStatusDto,
+    @GetUser() user: User,
   ) {
-    return this.authService.updateStatus(id, updateUserStatusDto.isActive);
+    return this.authService.updateStatus(id, updateUserStatusDto.isActive, user);
   }
 
   @Patch('users/:id/password')
@@ -65,8 +66,8 @@ export class AuthController {
 
   @Delete('users/:id')
   @Auth(ValidRoles.admin)
-  removeUser(@Param('id', ParseUUIDPipe) id: string) {
-    return this.authService.removeUser(id);
+  removeUser(@Param('id', ParseUUIDPipe) id: string, @GetUser() user: User) {
+    return this.authService.removeUser(id, user);
   }
 
 
@@ -124,3 +125,7 @@ export class AuthController {
 
 
 }
+
+
+
+

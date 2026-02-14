@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, InternalServerErrorException, NotFoundException, UnauthorizedException } from '@nestjs/common';
+﻿import { BadRequestException, Injectable, InternalServerErrorException, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -58,6 +58,9 @@ export class AuthService {
 
     if ( !user ) 
       throw new UnauthorizedException('Credentials are not valid (employee number)');
+
+    if ( !user.isActive )
+      throw new UnauthorizedException('User is inactive');
       
     if ( !bcrypt.compareSync( password, user.password ) )
       throw new UnauthorizedException('Credentials are not valid (password)');
@@ -85,10 +88,22 @@ export class AuthService {
     });
   }
 
-  async updateStatus(userId: string, isActive: boolean) {
+  async updateStatus(userId: string, isActive: boolean, actor: User) {
     const user = await this.userRepository.findOneBy({ id: userId });
     if (!user) {
       throw new NotFoundException(`Usuario con id ${userId} no encontrado`);
+    }
+
+    if (user.roles?.includes('admin')) {
+      if (user.id === actor.id) {
+        throw new BadRequestException('No puedes cambiar el estado de tu propio usuario');
+      }
+      if (!isActive && user.isActive) {
+        const activeAdmins = await this.countActiveAdmins();
+        if (activeAdmins <= 1) {
+          throw new BadRequestException('No puedes desactivar el ultimo admin activo');
+        }
+      }
     }
 
     user.isActive = isActive;
@@ -110,10 +125,22 @@ export class AuthService {
     return user;
   }
 
-  async removeUser(userId: string) {
+  async removeUser(userId: string, actor: User) {
     const user = await this.userRepository.findOneBy({ id: userId });
     if (!user) {
       throw new NotFoundException(`Usuario con id ${userId} no encontrado`);
+    }
+
+    if (user.roles?.includes('admin')) {
+      if (user.id === actor.id) {
+        throw new BadRequestException('No puedes eliminar tu propio usuario');
+      }
+      if (user.isActive) {
+        const activeAdmins = await this.countActiveAdmins();
+        if (activeAdmins <= 1) {
+          throw new BadRequestException('No puedes eliminar el ultimo admin activo');
+        }
+      }
     }
 
     try {
@@ -132,6 +159,14 @@ export class AuthService {
 
 
   
+  private async countActiveAdmins(): Promise<number> {
+    return this.userRepository
+      .createQueryBuilder('user')
+      .where(':role = ANY(user.roles)', { role: 'admin' })
+      .andWhere('user.isActive = true')
+      .getCount();
+  }
+
   private getJwtToken( payload: JwtPayload ) {
     const token = this.jwtService.sign( payload );
     return token;
@@ -152,3 +187,9 @@ export class AuthService {
 
 
 }
+
+
+
+
+
+
