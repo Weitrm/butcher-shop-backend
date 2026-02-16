@@ -9,6 +9,8 @@ import { User } from './entities/user.entity';
 import { LoginUserDto, CreateUserDto } from './dto';
 import { JwtPayload } from './interfaces/jwt-payload.interface';
 
+const LEGACY_SUPER_ROLE = 'super';
+const SUPER_USER_ROLE = 'super-user';
 
 @Injectable()
 export class AuthService {
@@ -25,10 +27,12 @@ export class AuthService {
     
     try {
 
-      const { password, ...userData } = createUserDto;
+      const { password, isSuperUser, ...userData } = createUserDto;
       
       const user = this.userRepository.create({
         ...userData,
+        isSuperUser: Boolean(isSuperUser),
+        roles: this.getRolesForSuperFlag(Boolean(isSuperUser)),
         password: bcrypt.hashSync( password, 10 )
       });
 
@@ -74,6 +78,7 @@ export class AuthService {
     if ( !bcrypt.compareSync( password, user.password ) )
       throw new UnauthorizedException('Credentials are not valid (password)');
 
+    this.normalizeSuperUser(user);
     delete user.password;
 
     return {
@@ -83,6 +88,7 @@ export class AuthService {
   }
 
   async checkAuthStatus( user: User ){
+    this.normalizeSuperUser(user);
 
     return {
       user: user,
@@ -92,9 +98,10 @@ export class AuthService {
   }
 
   async findAll() {
-    return this.userRepository.find({
+    const users = await this.userRepository.find({
       order: { fullName: 'ASC' },
     });
+    return users.map((user) => this.normalizeSuperUser(user));
   }
 
   async updateStatus(userId: string, isActive: boolean, actor: User) {
@@ -118,7 +125,7 @@ export class AuthService {
     user.isActive = isActive;
     await this.userRepository.save(user);
 
-    return user;
+    return this.normalizeSuperUser(user);
   }
 
   async updateSuperUser(userId: string, isSuperUser: boolean) {
@@ -128,9 +135,10 @@ export class AuthService {
     }
 
     user.isSuperUser = isSuperUser;
+    user.roles = this.getRolesForSuperFlag(isSuperUser, user.roles || []);
     await this.userRepository.save(user);
 
-    return user;
+    return this.normalizeSuperUser(user);
   }
 
   async updatePassword(userId: string, password: string) {
@@ -143,7 +151,7 @@ export class AuthService {
     await this.userRepository.save(user);
 
     delete user.password;
-    return user;
+    return this.normalizeSuperUser(user);
   }
 
   async removeUser(userId: string, actor: User) {
@@ -204,6 +212,27 @@ export class AuthService {
 
     throw new InternalServerErrorException('Please check server logs');
 
+  }
+
+  private getRolesForSuperFlag(
+    isSuperUser: boolean,
+    currentRoles: string[] = ['user'],
+  ) {
+    const normalized = Array.from(new Set((currentRoles || []).filter(Boolean)));
+    const withoutLegacy = normalized.filter(
+      (role) => role !== LEGACY_SUPER_ROLE && role !== SUPER_USER_ROLE,
+    );
+    return isSuperUser ? [...withoutLegacy, SUPER_USER_ROLE] : withoutLegacy;
+  }
+
+  private normalizeSuperUser(user: User) {
+    if (!user) return user;
+    const roles = user.roles || [];
+    user.isSuperUser =
+      user.isSuperUser === true ||
+      roles.includes(SUPER_USER_ROLE) ||
+      roles.includes(LEGACY_SUPER_ROLE);
+    return user;
   }
 
 
