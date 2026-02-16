@@ -34,36 +34,42 @@ export class FilesController {
   ) {}
 
   @Get('product/:imageName')
-  findProductImage(
+  async findProductImage(
     @Res() res: Response,
     @Param('imageName') imageName: string,
   ) {
-    const path = this.filesService.getStaticProductImage(imageName);
+    const storedImage = await this.filesService.getStoredProductImage(imageName);
 
-    res.sendFile(path);
+    if (storedImage) {
+      res.setHeader('Content-Type', storedImage.mimeType);
+      return res.send(storedImage.data);
+    }
+
+    const path = this.filesService.getStaticProductImage(imageName);
+    return res.sendFile(path);
   }
 
   @Post('product')
   @UseInterceptors(
     FileInterceptor('file', {
       fileFilter: fileFilter,
-      // limits: { fileSize: 1000 }
+      limits: { fileSize: 5 * 1024 * 1024 },
       storage: diskStorage({
         destination: PRODUCT_IMAGES_PATH,
         filename: fileNamer,
       }),
     }),
   )
-  uploadProductImage(@UploadedFile() file: Express.Multer.File) {
+  async uploadProductImage(@UploadedFile() file: Express.Multer.File) {
     if (!file) {
       throw new BadRequestException('Make sure that the file is an image');
     }
 
-    // const secureUrl = `${ file.filename }`;
+    const fileName = await this.filesService.storeProductImage(file);
     const secureUrl = `${this.configService.get('HOST_API')}/files/product/${
-      file.filename
+      fileName
     }`;
 
-    return { secureUrl, fileName: file.filename };
+    return { secureUrl, fileName };
   }
 }
