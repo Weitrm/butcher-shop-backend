@@ -8,7 +8,13 @@ import { AuthService } from './auth.service';
 import { RawHeaders, GetUser, Auth } from './decorators';
 import { RoleProtected } from './decorators/role-protected.decorator';
 
-import { CreateUserDto, LoginUserDto, UpdateUserStatusDto, UpdateUserPasswordDto } from './dto';
+import {
+  CreateUserDto,
+  LoginUserDto,
+  UpdateUserStatusDto,
+  UpdateUserPasswordDto,
+  UpdateUserSuperUserDto,
+} from './dto';
 import { User } from './entities/user.entity';
 import { UserRoleGuard } from './guards/user-role.guard';
 import { ValidRoles } from './interfaces';
@@ -62,6 +68,15 @@ export class AuthController {
     @Body() updateUserPasswordDto: UpdateUserPasswordDto,
   ) {
     return this.authService.updatePassword(id, updateUserPasswordDto.password);
+  }
+
+  @Patch('users/:id/super-user')
+  @Auth(ValidRoles.admin)
+  updateUserSuperUser(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() updateUserSuperUserDto: UpdateUserSuperUserDto,
+  ) {
+    return this.authService.updateSuperUser(id, updateUserSuperUserDto.isSuperUser);
   }
 
   @Delete('users/:id')

@@ -18,12 +18,13 @@ import {
 import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
 import { OrdersQueryDto } from './dto/orders-query.dto';
-import { Order, OrderItem, OrderStatus } from './entities';
+import { UpdateOrderSettingsDto } from './dto/update-order-settings.dto';
+import { Order, OrderItem, OrderSettings, OrderStatus } from './entities';
 import { Product } from '../products/entities';
 import { User } from '../auth/entities/user.entity';
 import { PaginationDto } from '../common/dtos/pagination.dto';
 
-const MAX_TOTAL_KG = 10;
+const DEFAULT_MAX_TOTAL_KG = 10;
 const MAX_ITEMS = 2;
 
 @Injectable()
@@ -40,11 +41,16 @@ export class OrdersService {
     @InjectRepository(Product)
     private readonly productRepository: Repository<Product>,
 
+    @InjectRepository(OrderSettings)
+    private readonly orderSettingsRepository: Repository<OrderSettings>,
+
     private readonly dataSource: DataSource,
   ) {}
 
   async create(createOrderDto: CreateOrderDto, user: User) {
     const { items } = createOrderDto;
+    const isSuperUser = this.isSuperOrderingUser(user);
+    const settings = await this.getSettings();
 
     if (!user.isActive) {
       throw new ForbiddenException(
@@ -56,8 +62,25 @@ export class OrdersService {
       throw new BadRequestException('El pedido debe contener productos');
     }
 
-    if (items.length > MAX_ITEMS) {
+    if (!isSuperUser && items.length > MAX_ITEMS) {
       throw new BadRequestException('Solo se permiten 2 productos por pedido');
+    }
+
+    if (!isSuperUser) {
+      const startOfWeek = this.getStartOfWeek();
+      const existingOrder = await this.orderRepository.findOne({
+        where: {
+          user: { id: user.id },
+          createdAt: MoreThanOrEqual(startOfWeek),
+        },
+        order: { createdAt: 'DESC' },
+      });
+
+      if (existingOrder) {
+        throw new BadRequestException(
+          'Solo puedes realizar un pedido por semana. El limite se reinicia los domingos.',
+        );
+      }
     }
 
     const productIds = items.map((item) => item.productId);
@@ -86,9 +109,21 @@ export class OrdersService {
         throw new NotFoundException(`Producto ${item.productId} no encontrado`);
       }
 
-      if (!product.isActive) {
+      if (!product.isActive && !isSuperUser) {
         throw new BadRequestException(
           `El producto ${product.title} no esta disponible`,
+        );
+      }
+
+      if (!isSuperUser && item.kg > product.maxKgPerOrder) {
+        throw new BadRequestException(
+          `No puedes pedir mas de ${product.maxKgPerOrder} kg de ${product.title}`,
+        );
+      }
+
+      if (item.isBox && !product.allowBoxes) {
+        throw new BadRequestException(
+          `El producto ${product.title} no permite pedidos por caja`,
         );
       }
 
@@ -106,13 +141,16 @@ export class OrdersService {
       return this.orderItemRepository.create({
         product,
         kg: item.kg,
+        isBox: Boolean(item.isBox && product.allowBoxes),
         unitPrice,
         subtotal,
       });
     });
 
-    if (totalKg > MAX_TOTAL_KG) {
-      throw new BadRequestException('El total no puede superar los 10 kg');
+    if (!isSuperUser && totalKg > settings.maxTotalKg) {
+      throw new BadRequestException(
+        `El total no puede superar los ${settings.maxTotalKg} kg`,
+      );
     }
 
     try {
@@ -134,6 +172,16 @@ export class OrdersService {
     } catch (error) {
       this.handleDBExceptions(error);
     }
+  }
+
+  async getSettings() {
+    return this.getOrCreateSettings();
+  }
+
+  async updateSettings(updateOrderSettingsDto: UpdateOrderSettingsDto) {
+    const settings = await this.getOrCreateSettings();
+    settings.maxTotalKg = updateOrderSettingsDto.maxTotalKg;
+    return this.orderSettingsRepository.save(settings);
   }
 
   async findAllByUser(user: User, paginationDto: PaginationDto) {
@@ -495,11 +543,13 @@ export class OrdersService {
               fullName: order.user.fullName,
               employeeNumber: order.user.employeeNumber,
               nationalId: order.user.nationalId,
+              isSuperUser: order.user.isSuperUser,
             }
           : null,
         items: (order.items || []).map((item) => ({
           id: item.id,
           kg: item.kg,
+          isBox: item.isBox,
           product: item.product
             ? {
                 id: item.product.id,
@@ -522,6 +572,7 @@ export class OrdersService {
           fullName: user.fullName,
           employeeNumber: user.employeeNumber,
           nationalId: user.nationalId,
+          isSuperUser: user.isSuperUser,
         }
       : undefined;
 
@@ -552,12 +603,36 @@ export class OrdersService {
     );
   }
 
+  private async getOrCreateSettings() {
+    const [existingSettings] = await this.orderSettingsRepository.find({
+      order: { id: 'ASC' },
+      take: 1,
+    });
+    let settings = existingSettings;
+
+    if (!settings) {
+      settings = this.orderSettingsRepository.create({
+        maxTotalKg: DEFAULT_MAX_TOTAL_KG,
+      });
+      settings = await this.orderSettingsRepository.save(settings);
+    }
+
+    return settings;
+  }
+
+  private isSuperOrderingUser(user: User) {
+    return (
+      user?.isSuperUser === true ||
+      user?.roles?.includes('super-user') ||
+      user?.roles?.includes('super')
+    );
+  }
+
   private getStartOfWeek(reference = new Date()) {
     const startOfWeek = new Date(reference);
     startOfWeek.setHours(0, 0, 0, 0);
     const dayOfWeek = startOfWeek.getDay();
-    const diffToMonday = (dayOfWeek + 6) % 7;
-    startOfWeek.setDate(startOfWeek.getDate() - diffToMonday);
+    startOfWeek.setDate(startOfWeek.getDate() - dayOfWeek);
     return startOfWeek;
   }
 

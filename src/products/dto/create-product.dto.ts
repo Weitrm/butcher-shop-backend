@@ -55,5 +55,22 @@ export class CreateProductDto {
     @IsOptional()
     isActive?: boolean;
 
+    @ApiProperty({
+        required: false,
+        minimum: 1,
+        default: 10,
+    })
+    @IsInt()
+    @IsPositive()
+    @IsOptional()
+    maxKgPerOrder?: number;
+
+    @ApiProperty({
+        required: false,
+        default: false,
+    })
+    @IsBoolean()
+    @IsOptional()
+    allowBoxes?: boolean;
 
 }

@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsInt, IsUUID, Min } from 'class-validator';
+import { IsBoolean, IsInt, IsOptional, IsUUID, Min } from 'class-validator';
 
 export class CreateOrderItemDto {
   @ApiProperty({ description: 'Product ID' })
@@ -10,4 +10,13 @@ export class CreateOrderItemDto {
   @IsInt()
   @Min(1)
   kg: number;
+
+  @ApiProperty({
+    description: 'Whether this product is requested as box',
+    required: false,
+    default: false,
+  })
+  @IsBoolean()
+  @IsOptional()
+  isBox?: boolean;
 }

@@ -57,6 +57,18 @@ export class ProductsController {
     return this.productsService.findOnePlain(term);
   }
 
+  @Get('shop')
+  @Auth()
+  findAllForShop(@Query() paginationDto: PaginationDto, @GetUser() user: User) {
+    return this.productsService.findAllForShop(paginationDto, user);
+  }
+
+  @Get('shop/:term')
+  @Auth()
+  findOneForShop(@Param('term') term: string, @GetUser() user: User) {
+    return this.productsService.findOneForShop(term, user);
+  }
+
   @Get(':term')
   findOne(@Param('term') term: string) {
     return this.productsService.findOnePlain(term, true);

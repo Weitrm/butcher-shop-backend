@@ -21,6 +21,14 @@ export class OrderItem {
   @Column('int')
   kg: number;
 
+  @ApiProperty({
+    example: false,
+    description: 'Whether this item was requested as a box',
+    default: false,
+  })
+  @Column('bool', { default: false })
+  isBox: boolean;
+
   @ApiProperty({ example: 1500, description: 'Unit price at order time' })
   @Column('float')
   unitPrice: number;

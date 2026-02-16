@@ -75,6 +75,26 @@ export class Product {
     })
     isActive: boolean;
 
+    @ApiProperty({
+        example: 5,
+        description: 'Maximum kg allowed per order for this product',
+        default: 10,
+    })
+    @Column('int', {
+        default: 10,
+    })
+    maxKgPerOrder: number;
+
+    @ApiProperty({
+        example: false,
+        description: 'Whether this product can be ordered as boxes',
+        default: false,
+    })
+    @Column('bool', {
+        default: false,
+    })
+    allowBoxes: boolean;
+
     // images
     @ApiProperty()
     @OneToMany(

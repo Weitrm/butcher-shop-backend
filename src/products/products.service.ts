@@ -120,6 +120,14 @@ export class ProductsService {
     };
   }
 
+  async findAllForShop(paginationDto: PaginationDto, user: User) {
+    const canViewHidden =
+      user?.isSuperUser === true ||
+      user?.roles?.includes('super-user') ||
+      user?.roles?.includes('super');
+    return this.findAll(paginationDto, canViewHidden);
+  }
+
   async findOne(term: string, onlyActive = false) {
     let product: Product;
 
@@ -156,6 +164,14 @@ export class ProductsService {
       ...rest,
       images: images.map((image) => image.url),
     };
+  }
+
+  async findOneForShop(term: string, user: User) {
+    const canViewHidden =
+      user?.isSuperUser === true ||
+      user?.roles?.includes('super-user') ||
+      user?.roles?.includes('super');
+    return this.findOnePlain(term, !canViewHidden);
   }
 
   async update(id: string, updateProductDto: UpdateProductDto, user: User) {

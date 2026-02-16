@@ -32,6 +32,11 @@ export class User {
     })
     isActive: boolean;
 
+    @Column('bool', {
+        default: false
+    })
+    isSuperUser: boolean;
+
     @Column('text', {
         array: true,
         default: ['user']

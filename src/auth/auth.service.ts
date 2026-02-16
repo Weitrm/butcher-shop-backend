@@ -53,7 +53,16 @@ export class AuthService {
 
     const user = await this.userRepository.findOne({
       where: { employeeNumber },
-      select: { employeeNumber: true, nationalId: true, password: true, id: true, fullName: true, isActive: true, roles: true}
+      select: {
+        employeeNumber: true,
+        nationalId: true,
+        password: true,
+        id: true,
+        fullName: true,
+        isActive: true,
+        isSuperUser: true,
+        roles: true,
+      },
     });
 
     if ( !user ) 
@@ -107,6 +116,18 @@ export class AuthService {
     }
 
     user.isActive = isActive;
+    await this.userRepository.save(user);
+
+    return user;
+  }
+
+  async updateSuperUser(userId: string, isSuperUser: boolean) {
+    const user = await this.userRepository.findOneBy({ id: userId });
+    if (!user) {
+      throw new NotFoundException(`Usuario con id ${userId} no encontrado`);
+    }
+
+    user.isSuperUser = isSuperUser;
     await this.userRepository.save(user);
 
     return user;
