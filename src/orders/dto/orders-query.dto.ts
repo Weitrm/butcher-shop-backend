@@ -1,6 +1,8 @@
-import { IsIn, IsOptional, IsString } from 'class-validator';
+import { IsIn, IsOptional, IsString, Matches } from 'class-validator';
 
 import { PaginationDto } from '../../common/dtos/pagination.dto';
+
+const DATE_ONLY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
 export class OrdersQueryDto extends PaginationDto {
   @IsOptional()
@@ -14,4 +16,12 @@ export class OrdersQueryDto extends PaginationDto {
   @IsOptional()
   @IsString()
   product?: string;
+
+  @IsOptional()
+  @Matches(DATE_ONLY_PATTERN, { message: 'fromDate must be YYYY-MM-DD' })
+  fromDate?: string;
+
+  @IsOptional()
+  @Matches(DATE_ONLY_PATTERN, { message: 'toDate must be YYYY-MM-DD' })
+  toDate?: string;
 }

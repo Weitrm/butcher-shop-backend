@@ -8,8 +8,11 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import {
+  Between,
   DataSource,
+  FindOptionsWhere,
   In,
+  LessThanOrEqual,
   MoreThanOrEqual,
   Not,
   Repository,
@@ -191,18 +194,31 @@ export class OrdersService {
     return this.orderSettingsRepository.save(settings);
   }
 
-  async findAllByUser(user: User, paginationDto: PaginationDto) {
-    const { limit = 10, offset = 0 } = paginationDto;
+  async findAllByUser(user: User, queryDto: OrdersQueryDto) {
+    const { limit = 10, offset = 0, fromDate, toDate } = queryDto;
+    const safeLimit = Math.max(1, limit);
+    const safeOffset = Math.max(0, offset);
+    const { from, to } = this.buildDateRange(fromDate, toDate);
+    const where: FindOptionsWhere<Order> = { user: { id: user.id } };
+
+    if (from && to) {
+      where.createdAt = Between(from, to);
+    } else if (from) {
+      where.createdAt = MoreThanOrEqual(from);
+    } else if (to) {
+      where.createdAt = LessThanOrEqual(to);
+    }
+
     const [orders, totalOrders] = await this.orderRepository.findAndCount({
-      where: { user: { id: user.id } },
+      where,
       order: { createdAt: 'DESC' },
-      take: limit,
-      skip: offset,
+      take: safeLimit,
+      skip: safeOffset,
     });
 
     return {
       count: totalOrders,
-      pages: Math.ceil(totalOrders / limit),
+      pages: Math.ceil(totalOrders / safeLimit),
       orders: orders.map((order) => this.mapOrderResponse(order)),
     };
   }
@@ -214,9 +230,12 @@ export class OrdersService {
       scope = 'all',
       user,
       product,
+      fromDate,
+      toDate,
     } = queryDto;
     const safeLimit = Math.max(1, limit);
     const safeOffset = Math.max(0, offset);
+    const { from, to } = this.buildDateRange(fromDate, toDate);
 
     const queryBuilder = this.orderRepository
       .createQueryBuilder('order')
@@ -253,6 +272,14 @@ export class OrdersService {
         '(product.title ILIKE :product OR product.slug ILIKE :product)',
         { product: `%${product}%` },
       );
+    }
+
+    if (from) {
+      queryBuilder.andWhere('order.createdAt >= :fromDate', { fromDate: from });
+    }
+
+    if (to) {
+      queryBuilder.andWhere('order.createdAt <= :toDate', { toDate: to });
     }
 
     const [orders, totalOrders] = await queryBuilder.getManyAndCount();
@@ -696,6 +723,56 @@ export class OrdersService {
     const dayOfWeek = startOfWeek.getDay();
     startOfWeek.setDate(startOfWeek.getDate() - dayOfWeek);
     return startOfWeek;
+  }
+
+  private buildDateRange(fromDate?: string, toDate?: string) {
+    const from = fromDate ? this.parseDateOnly(fromDate, false) : undefined;
+    const to = toDate ? this.parseDateOnly(toDate, true) : undefined;
+
+    if (from && to && from.getTime() > to.getTime()) {
+      throw new BadRequestException(
+        'La fecha inicial no puede ser mayor que la fecha final',
+      );
+    }
+
+    return { from, to };
+  }
+
+  private parseDateOnly(value: string, endOfDay: boolean) {
+    const [yearRaw, monthRaw, dayRaw] = value.split('-');
+    const year = Number(yearRaw);
+    const month = Number(monthRaw);
+    const day = Number(dayRaw);
+
+    if (!year || !month || !day) {
+      throw new BadRequestException(
+        'Formato de fecha invalido. Usa YYYY-MM-DD',
+      );
+    }
+
+    const date = new Date(
+      Date.UTC(
+        year,
+        month - 1,
+        day,
+        endOfDay ? 23 : 0,
+        endOfDay ? 59 : 0,
+        endOfDay ? 59 : 0,
+        endOfDay ? 999 : 0,
+      ),
+    );
+
+    if (
+      date.getUTCFullYear() !== year ||
+      date.getUTCMonth() !== month - 1 ||
+      date.getUTCDate() !== day
+    ) {
+      throw new BadRequestException(
+        'Formato de fecha invalido. Usa YYYY-MM-DD',
+      );
+    }
+
+    return date;
   }
 
   private formatDateKey(date: Date) {

@@ -25,8 +25,8 @@ export class OrdersController {
 
   @Get()
   @ApiResponse({ status: 200, description: 'Orders list' })
-  findAll(@GetUser() user: User, @Query() paginationDto: PaginationDto) {
-    return this.ordersService.findAllByUser(user, paginationDto);
+  findAll(@GetUser() user: User, @Query() queryDto: OrdersQueryDto) {
+    return this.ordersService.findAllByUser(user, queryDto);
   }
 
   @Get('admin/dashboard')
