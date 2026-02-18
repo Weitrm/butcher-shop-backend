@@ -22,8 +22,12 @@ export class Order {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @ManyToOne(() => User, (user) => user.orders, { eager: true })
-  user: User;
+  @ManyToOne(() => User, (user) => user.orders, {
+    eager: true,
+    nullable: true,
+    onDelete: 'SET NULL',
+  })
+  user: User | null;
 
   @OneToMany(() => OrderItem, (item) => item.order, {
     cascade: true,

@@ -1,7 +1,7 @@
 ﻿import { BadRequestException, Injectable, InternalServerErrorException, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { DataSource, Repository } from 'typeorm';
 
 import * as bcrypt from 'bcrypt';
 
@@ -20,6 +20,7 @@ export class AuthService {
     private readonly userRepository: Repository<User>,
 
     private readonly jwtService: JwtService,
+    private readonly dataSource: DataSource,
   ) {}
 
 
@@ -172,15 +173,32 @@ export class AuthService {
       }
     }
 
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
     try {
-      await this.userRepository.remove(user);
+      // Preserve orders/products history while allowing user deletion.
+      await queryRunner.manager.query(
+        'UPDATE "orders" SET "userId" = NULL WHERE "userId" = $1',
+        [userId],
+      );
+      await queryRunner.manager.query(
+        'UPDATE "products" SET "userId" = NULL WHERE "userId" = $1',
+        [userId],
+      );
+      await queryRunner.manager.delete(User, { id: userId });
+      await queryRunner.commitTransaction();
     } catch (error) {
+      await queryRunner.rollbackTransaction();
       if (error?.code === '23503') {
         throw new BadRequestException(
-          'No se puede eliminar un usuario con pedidos o productos asociados',
+          'No se pudo eliminar el usuario por dependencias activas',
         );
       }
       this.handleDBErrors(error);
+    } finally {
+      await queryRunner.release();
     }
 
     return { id: userId };

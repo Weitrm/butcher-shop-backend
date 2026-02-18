@@ -108,9 +108,13 @@ export class Product {
     @ManyToOne(
         () => User,
         ( user ) => user.product,
-        { eager: true }
+        {
+            eager: true,
+            nullable: true,
+            onDelete: 'SET NULL',
+        }
     )
-    user: User
+    user: User | null
 
 
     @BeforeInsert()

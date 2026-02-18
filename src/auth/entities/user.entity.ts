@@ -47,7 +47,7 @@ export class User {
         () => Product,
         ( product ) => product.user
     )
-    product: Product;
+    product: Product[];
 
     @OneToMany(
         () => Order,
