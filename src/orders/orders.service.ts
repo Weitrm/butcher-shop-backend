@@ -482,9 +482,41 @@ export class OrdersService {
       .orderBy('bucket', 'ASC')
       .getRawMany();
 
+    const activityProductsRaw = await this.orderItemRepository
+      .createQueryBuilder('item')
+      .innerJoin('item.order', 'order')
+      .innerJoin('item.product', 'product')
+      .select(`DATE_TRUNC('${activityUnit}', order.createdAt)`, 'bucket')
+      .addSelect('product.id', 'productId')
+      .addSelect('product.title', 'title')
+      .addSelect('product.slug', 'slug')
+      .addSelect('SUM(item.kg)', 'totalKg')
+      .addSelect('COUNT(DISTINCT order.id)', 'totalOrders')
+      .where('order.createdAt >= :activityStart', { activityStart })
+      .andWhere('order.status != :cancelled', {
+        cancelled: OrderStatus.Cancelled,
+      })
+      .groupBy('bucket')
+      .addGroupBy('product.id')
+      .addGroupBy('product.title')
+      .addGroupBy('product.slug')
+      .orderBy('bucket', 'ASC')
+      .addOrderBy('"totalKg"', 'DESC')
+      .getRawMany();
+
     const activityMap = new Map<
       string,
       { totalKg: number; totalOrders: number }
+    >();
+    const activityProductsMap = new Map<
+      string,
+      Array<{
+        productId: string;
+        title: string;
+        slug: string;
+        totalKg: number;
+        totalOrders: number;
+      }>
     >();
 
     activityRaw.forEach((row) => {
@@ -498,6 +530,26 @@ export class OrdersService {
         totalKg: Number(row.totalKg || 0),
         totalOrders: Number(row.totalOrders || 0),
       });
+    });
+
+    activityProductsRaw.forEach((row) => {
+      const bucketValue =
+        row.bucket instanceof Date ? row.bucket : new Date(row.bucket);
+      const bucketKey =
+        activityUnit === 'day'
+          ? this.formatDateKey(bucketValue)
+          : this.formatMonthKey(bucketValue);
+      const products = activityProductsMap.get(bucketKey) || [];
+
+      products.push({
+        productId: row.productId,
+        title: row.title,
+        slug: row.slug,
+        totalKg: Number(row.totalKg || 0),
+        totalOrders: Number(row.totalOrders || 0),
+      });
+
+      activityProductsMap.set(bucketKey, products);
     });
 
     const activity = Array.from({ length: activityPoints }, (_, index) => {
@@ -516,10 +568,12 @@ export class OrdersService {
         totalKg: 0,
         totalOrders: 0,
       };
+      const products = activityProductsMap.get(bucketKey) || [];
 
       return {
         date: bucketKey,
         ...bucketStats,
+        products,
       };
     });
 

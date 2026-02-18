@@ -13,14 +13,16 @@ import { AuthModule } from './auth/auth.module';
 import { MessagesWsModule } from './messages-ws/messages-ws.module';
 import { OrdersModule } from './orders/orders.module';
 
+const isProd = process.env.STAGE === 'prod';
+
 @Module({
   imports: [
     ConfigModule.forRoot(),
 
     TypeOrmModule.forRoot({
-      ssl: process.env.STAGE === 'prod',
+      ssl: isProd,
       extra: {
-        ssl: process.env.STAGE === 'prod'
+        ssl: isProd
               ? { rejectUnauthorized: false }
               : null,
       },
@@ -31,7 +33,7 @@ import { OrdersModule } from './orders/orders.module';
       username: process.env.DB_USERNAME,
       password: process.env.DB_PASSWORD,      
       autoLoadEntities: true,
-      synchronize: true,
+      synchronize: !isProd,
     }),
 
     ServeStaticModule.forRoot({
