@@ -25,7 +25,7 @@ import { User } from '../auth/entities/user.entity';
 import { PaginationDto } from '../common/dtos/pagination.dto';
 
 const DEFAULT_MAX_TOTAL_KG = 10;
-const MAX_ITEMS = 2;
+const DEFAULT_MAX_ITEMS = 2;
 
 @Injectable()
 export class OrdersService {
@@ -51,6 +51,10 @@ export class OrdersService {
     const { items } = createOrderDto;
     const isSuperUser = this.isSuperOrderingUser(user);
     const settings = await this.getSettings();
+    const maxItemsLimit =
+      Number.isFinite(settings.maxItems) && settings.maxItems > 0
+        ? Math.floor(settings.maxItems)
+        : DEFAULT_MAX_ITEMS;
 
     if (!user.isActive) {
       throw new ForbiddenException(
@@ -62,8 +66,10 @@ export class OrdersService {
       throw new BadRequestException('El pedido debe contener productos');
     }
 
-    if (!isSuperUser && items.length > MAX_ITEMS) {
-      throw new BadRequestException('Solo se permiten 2 productos por pedido');
+    if (!isSuperUser && items.length > maxItemsLimit) {
+      throw new BadRequestException(
+        `Solo se permiten ${maxItemsLimit} productos por pedido`,
+      );
     }
 
     if (!isSuperUser) {
@@ -181,6 +187,7 @@ export class OrdersService {
   async updateSettings(updateOrderSettingsDto: UpdateOrderSettingsDto) {
     const settings = await this.getOrCreateSettings();
     settings.maxTotalKg = updateOrderSettingsDto.maxTotalKg;
+    settings.maxItems = updateOrderSettingsDto.maxItems;
     return this.orderSettingsRepository.save(settings);
   }
 
@@ -613,6 +620,7 @@ export class OrdersService {
     if (!settings) {
       settings = this.orderSettingsRepository.create({
         maxTotalKg: DEFAULT_MAX_TOTAL_KG,
+        maxItems: DEFAULT_MAX_ITEMS,
       });
       settings = await this.orderSettingsRepository.save(settings);
     }

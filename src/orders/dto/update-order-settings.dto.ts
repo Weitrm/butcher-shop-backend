@@ -10,4 +10,13 @@ export class UpdateOrderSettingsDto {
   @IsInt()
   @Min(1)
   maxTotalKg: number;
+
+  @ApiProperty({
+    example: 2,
+    minimum: 1,
+    description: 'Maximum distinct products allowed per order for regular users',
+  })
+  @IsInt()
+  @Min(1)
+  maxItems: number;
 }
