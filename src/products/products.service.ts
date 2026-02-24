@@ -7,12 +7,8 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import {
-  Between,
+  Brackets,
   DataSource,
-  ILike,
-  In,
-  LessThanOrEqual,
-  MoreThanOrEqual,
   Repository,
 } from 'typeorm';
 
@@ -83,50 +79,58 @@ export class ProductsService {
         : undefined
       : true;
 
-    const priceWhere =
-      minPrice !== undefined && maxPrice !== undefined
-        ? Between(minPrice, maxPrice)
-        : minPrice !== undefined
-        ? MoreThanOrEqual(minPrice)
-        : maxPrice !== undefined
-        ? LessThanOrEqual(maxPrice)
-        : undefined;
-
     const normalizedVisibleSlugs = (visibleSlugs || [])
       .map((slug) => slug?.trim().toLowerCase())
       .filter((slug) => Boolean(slug));
-    const slugWhere =
-      normalizedVisibleSlugs.length > 0
-        ? In(normalizedVisibleSlugs)
-        : visibleSlugs
-        ? In(['__no_matches__'])
-        : undefined;
+    const normalizedQuery = query?.trim();
 
-    const products = await this.productRepository.find({
-      take: limit,
-      skip: offset,
-      relations: {
-        images: true,
-      },
-      order: {
-        id: 'ASC',
-      },
-      where: {
-        price: priceWhere,
-        title: query ? ILike(`%${query}%`) : undefined,
-        isActive: activeFilter,
-        slug: slugWhere,
-      },
-    });
+    const baseQuery = this.productRepository.createQueryBuilder('product');
 
-    const totalProducts = await this.productRepository.count({
-      where: {
-        price: priceWhere,
-        title: query ? ILike(`%${query}%`) : undefined,
+    if (minPrice !== undefined) {
+      baseQuery.andWhere('product.price >= :minPrice', { minPrice });
+    }
+
+    if (maxPrice !== undefined) {
+      baseQuery.andWhere('product.price <= :maxPrice', { maxPrice });
+    }
+
+    if (activeFilter !== undefined) {
+      baseQuery.andWhere('product.isActive = :isActive', {
         isActive: activeFilter,
-        slug: slugWhere,
-      },
-    });
+      });
+    }
+
+    if (visibleSlugs) {
+      if (normalizedVisibleSlugs.length > 0) {
+        baseQuery.andWhere('LOWER(product.slug) IN (:...visibleSlugs)', {
+          visibleSlugs: normalizedVisibleSlugs,
+        });
+      } else {
+        baseQuery.andWhere('1 = 0');
+      }
+    }
+
+    if (normalizedQuery) {
+      baseQuery.andWhere(
+        new Brackets((qb) => {
+          qb.where('product.title ILIKE :query', {
+            query: `%${normalizedQuery}%`,
+          }).orWhere('product.slug ILIKE :query', {
+            query: `%${normalizedQuery}%`,
+          });
+        }),
+      );
+    }
+
+    const totalProducts = await baseQuery.getCount();
+
+    const products = await baseQuery
+      .clone()
+      .leftJoinAndSelect('product.images', 'productImages')
+      .orderBy('product.id', 'ASC')
+      .take(limit)
+      .skip(offset)
+      .getMany();
 
     return {
       count: totalProducts,
