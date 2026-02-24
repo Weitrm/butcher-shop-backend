@@ -1,6 +1,16 @@
-import { BeforeInsert, BeforeUpdate, Column, Entity, OneToMany, PrimaryGeneratedColumn } from 'typeorm';
+import {
+  BeforeInsert,
+  BeforeUpdate,
+  Column,
+  Entity,
+  JoinColumn,
+  ManyToOne,
+  OneToMany,
+  PrimaryGeneratedColumn,
+} from 'typeorm';
 import { Product } from '../../products/entities';
 import { Order } from '../../orders/entities/order.entity';
+import { Sector } from '../../sectors/entities';
 
 
 @Entity('users')
@@ -42,6 +52,17 @@ export class User {
         default: ['user']
     })
     roles: string[];
+
+    @Column('uuid', { nullable: true })
+    sectorId: string | null;
+
+    @ManyToOne(() => Sector, (sector) => sector.users, {
+        eager: true,
+        nullable: true,
+        onDelete: 'SET NULL',
+    })
+    @JoinColumn({ name: 'sectorId' })
+    sector: Sector | null;
 
     @OneToMany(
         () => Product,

@@ -1,4 +1,10 @@
-﻿import { BadRequestException, Injectable, InternalServerErrorException, NotFoundException, UnauthorizedException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  InternalServerErrorException,
+  NotFoundException,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
@@ -6,54 +12,59 @@ import { DataSource, Repository } from 'typeorm';
 import * as bcrypt from 'bcrypt';
 
 import { User } from './entities/user.entity';
-import { LoginUserDto, CreateUserDto } from './dto';
+import { CreateUserDto, LoginUserDto, UsersQueryDto } from './dto';
 import { JwtPayload } from './interfaces/jwt-payload.interface';
+import { Sector } from '../sectors/entities';
 
 const LEGACY_SUPER_ROLE = 'super';
 const SUPER_USER_ROLE = 'super-user';
 
 @Injectable()
 export class AuthService {
-
   constructor(
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
+
+    @InjectRepository(Sector)
+    private readonly sectorRepository: Repository<Sector>,
 
     private readonly jwtService: JwtService,
     private readonly dataSource: DataSource,
   ) {}
 
-
-  async create( createUserDto: CreateUserDto) {
-    
+  async create(createUserDto: CreateUserDto) {
     try {
+      const { password, isSuperUser, sectorId, ...userData } = createUserDto;
+      const sector = sectorId
+        ? await this.sectorRepository.findOneBy({ id: sectorId })
+        : null;
 
-      const { password, isSuperUser, ...userData } = createUserDto;
-      
+      if (sectorId && !sector) {
+        throw new NotFoundException(`Sector con id ${sectorId} no encontrado`);
+      }
+
       const user = this.userRepository.create({
         ...userData,
         isSuperUser: Boolean(isSuperUser),
         roles: this.getRolesForSuperFlag(Boolean(isSuperUser)),
-        password: bcrypt.hashSync( password, 10 )
+        sectorId: sector?.id || null,
+        sector: sector || null,
+        password: bcrypt.hashSync(password, 10),
       });
 
-      await this.userRepository.save( user )
+      await this.userRepository.save(user);
       delete user.password;
 
       return {
-        user: user,
-        token: this.getJwtToken({ id: user.id })
+        user,
+        token: this.getJwtToken({ id: user.id }),
       };
-      // TODO: Retornar el JWT de acceso
-
     } catch (error) {
       this.handleDBErrors(error);
     }
-
   }
 
-  async login( loginUserDto: LoginUserDto ) {
-
+  async login(loginUserDto: LoginUserDto) {
     const { password, employeeNumber } = loginUserDto;
 
     const user = await this.userRepository.findOne({
@@ -67,42 +78,59 @@ export class AuthService {
         isActive: true,
         isSuperUser: true,
         roles: true,
+        sectorId: true,
+      },
+      relations: {
+        sector: true,
       },
     });
 
-    if ( !user ) 
-      throw new UnauthorizedException('Credentials are not valid (employee number)');
+    if (!user)
+      throw new UnauthorizedException(
+        'Credentials are not valid (employee number)',
+      );
 
-    if ( !user.isActive )
-      throw new UnauthorizedException('User is inactive');
-      
-    if ( !bcrypt.compareSync( password, user.password ) )
+    if (!user.isActive) throw new UnauthorizedException('User is inactive');
+
+    if (!bcrypt.compareSync(password, user.password))
       throw new UnauthorizedException('Credentials are not valid (password)');
 
     this.normalizeSuperUser(user);
     delete user.password;
 
     return {
-      user: user,
-      token: this.getJwtToken({ id: user.id })
+      user,
+      token: this.getJwtToken({ id: user.id }),
     };
   }
 
-  async checkAuthStatus( user: User ){
+  async checkAuthStatus(user: User) {
     this.normalizeSuperUser(user);
 
     return {
-      user: user,
-      token: this.getJwtToken({ id: user.id })
+      user,
+      token: this.getJwtToken({ id: user.id }),
     };
-
   }
 
-  async findAll() {
-    const users = await this.userRepository.find({
-      order: { fullName: 'ASC' },
-    });
-    return users.map((user) => this.normalizeSuperUser(user));
+  async findAll(queryDto?: UsersQueryDto) {
+    const usersQuery = this.userRepository
+      .createQueryBuilder('user')
+      .leftJoinAndSelect('user.sector', 'sector')
+      .orderBy('user.fullName', 'ASC');
+
+    if (queryDto?.role) {
+      usersQuery.andWhere(':role = ANY(user.roles)', { role: queryDto.role });
+    }
+
+    if (queryDto?.sectorId) {
+      usersQuery.andWhere('user.sectorId = :sectorId', {
+        sectorId: queryDto.sectorId,
+      });
+    }
+
+    const users = await usersQuery.getMany();
+    return users.map((listedUser) => this.normalizeSuperUser(listedUser));
   }
 
   async updateStatus(userId: string, isActive: boolean, actor: User) {
@@ -113,12 +141,16 @@ export class AuthService {
 
     if (user.roles?.includes('admin')) {
       if (user.id === actor.id) {
-        throw new BadRequestException('No puedes cambiar el estado de tu propio usuario');
+        throw new BadRequestException(
+          'No puedes cambiar el estado de tu propio usuario',
+        );
       }
       if (!isActive && user.isActive) {
         const activeAdmins = await this.countActiveAdmins();
         if (activeAdmins <= 1) {
-          throw new BadRequestException('No puedes desactivar el ultimo admin activo');
+          throw new BadRequestException(
+            'No puedes desactivar el ultimo admin activo',
+          );
         }
       }
     }
@@ -139,6 +171,30 @@ export class AuthService {
     user.roles = this.getRolesForSuperFlag(isSuperUser, user.roles || []);
     await this.userRepository.save(user);
 
+    return this.normalizeSuperUser(user);
+  }
+
+  async updateSector(userId: string, sectorId?: string | null) {
+    const user = await this.userRepository.findOneBy({ id: userId });
+    if (!user) {
+      throw new NotFoundException(`Usuario con id ${userId} no encontrado`);
+    }
+
+    if (!sectorId) {
+      user.sectorId = null;
+      user.sector = null;
+      await this.userRepository.save(user);
+      return this.normalizeSuperUser(user);
+    }
+
+    const sector = await this.sectorRepository.findOneBy({ id: sectorId });
+    if (!sector) {
+      throw new NotFoundException(`Sector con id ${sectorId} no encontrado`);
+    }
+
+    user.sectorId = sector.id;
+    user.sector = sector;
+    await this.userRepository.save(user);
     return this.normalizeSuperUser(user);
   }
 
@@ -168,7 +224,9 @@ export class AuthService {
       if (user.isActive) {
         const activeAdmins = await this.countActiveAdmins();
         if (activeAdmins <= 1) {
-          throw new BadRequestException('No puedes eliminar el ultimo admin activo');
+          throw new BadRequestException(
+            'No puedes eliminar el ultimo admin activo',
+          );
         }
       }
     }
@@ -178,7 +236,6 @@ export class AuthService {
     await queryRunner.startTransaction();
 
     try {
-      // Preserve orders/products history while allowing user deletion.
       await queryRunner.manager.query(
         'UPDATE "orders" SET "userId" = NULL WHERE "userId" = $1',
         [userId],
@@ -204,8 +261,6 @@ export class AuthService {
     return { id: userId };
   }
 
-
-  
   private async countActiveAdmins(): Promise<number> {
     return this.userRepository
       .createQueryBuilder('user')
@@ -214,22 +269,21 @@ export class AuthService {
       .getCount();
   }
 
-  private getJwtToken( payload: JwtPayload ) {
-    const token = this.jwtService.sign( payload );
-    return token;
-
+  private getJwtToken(payload: JwtPayload) {
+    return this.jwtService.sign(payload);
   }
 
-  private handleDBErrors( error: any ): never {
+  private handleDBErrors(error: any): never {
+    if (error instanceof NotFoundException) {
+      throw error;
+    }
 
+    if (error?.code === '23505') {
+      throw new BadRequestException(error.detail);
+    }
 
-    if ( error.code === '23505' ) 
-      throw new BadRequestException( error.detail );
-
-    console.log(error)
-
+    console.log(error);
     throw new InternalServerErrorException('Please check server logs');
-
   }
 
   private getRolesForSuperFlag(
@@ -252,12 +306,5 @@ export class AuthService {
       roles.includes(LEGACY_SUPER_ROLE);
     return user;
   }
-
-
 }
-
-
-
-
-
 

@@ -7,7 +7,6 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import {
-  ArrayContains,
   Between,
   DataSource,
   ILike,
@@ -36,6 +35,9 @@ export class ProductsService {
     @InjectRepository(ProductImage)
     private readonly productImageRepository: Repository<ProductImage>,
 
+    @InjectRepository(User)
+    private readonly userRepository: Repository<User>,
+
     private readonly dataSource: DataSource,
   ) {}
 
@@ -59,7 +61,11 @@ export class ProductsService {
     }
   }
 
-  async findAll(paginationDto: PaginationDto, includeInactive = false) {
+  async findAll(
+    paginationDto: PaginationDto,
+    includeInactive = false,
+    visibleSlugs?: string[],
+  ) {
     const {
       limit = 10,
       offset = 0,
@@ -86,6 +92,16 @@ export class ProductsService {
         ? LessThanOrEqual(maxPrice)
         : undefined;
 
+    const normalizedVisibleSlugs = (visibleSlugs || [])
+      .map((slug) => slug?.trim().toLowerCase())
+      .filter((slug) => Boolean(slug));
+    const slugWhere =
+      normalizedVisibleSlugs.length > 0
+        ? In(normalizedVisibleSlugs)
+        : visibleSlugs
+        ? In(['__no_matches__'])
+        : undefined;
+
     const products = await this.productRepository.find({
       take: limit,
       skip: offset,
@@ -99,6 +115,7 @@ export class ProductsService {
         price: priceWhere,
         title: query ? ILike(`%${query}%`) : undefined,
         isActive: activeFilter,
+        slug: slugWhere,
       },
     });
 
@@ -107,6 +124,7 @@ export class ProductsService {
         price: priceWhere,
         title: query ? ILike(`%${query}%`) : undefined,
         isActive: activeFilter,
+        slug: slugWhere,
       },
     });
 
@@ -125,7 +143,21 @@ export class ProductsService {
       user?.isSuperUser === true ||
       user?.roles?.includes('super-user') ||
       user?.roles?.includes('super');
-    return this.findAll(paginationDto, canViewHidden);
+    if (canViewHidden) {
+      return this.findAll(paginationDto, true);
+    }
+
+    const authUser = await this.userRepository.findOne({
+      where: { id: user.id },
+      relations: { sector: true },
+    });
+    const sector = authUser?.sector;
+    const allowedSlugs =
+      sector && !sector.allowAllProducts
+        ? sector.allowedProductSlugs || []
+        : undefined;
+
+    return this.findAll(paginationDto, false, allowedSlugs);
   }
 
   async findOne(term: string, onlyActive = false) {
@@ -171,7 +203,28 @@ export class ProductsService {
       user?.isSuperUser === true ||
       user?.roles?.includes('super-user') ||
       user?.roles?.includes('super');
-    return this.findOnePlain(term, !canViewHidden);
+    const product = await this.findOnePlain(term, !canViewHidden);
+
+    if (canViewHidden) {
+      return product;
+    }
+
+    const authUser = await this.userRepository.findOne({
+      where: { id: user.id },
+      relations: { sector: true },
+    });
+    const sector = authUser?.sector;
+
+    if (sector && !sector.allowAllProducts) {
+      const allowed = new Set(
+        (sector.allowedProductSlugs || []).map((slug) => slug.toLowerCase()),
+      );
+      if (!allowed.has(product.slug?.toLowerCase())) {
+        throw new NotFoundException(`Product with ${term} not found`);
+      }
+    }
+
+    return product;
   }
 
   async update(id: string, updateProductDto: UpdateProductDto, user: User) {

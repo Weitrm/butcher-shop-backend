@@ -21,14 +21,10 @@ import {
 import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
 import { OrdersQueryDto } from './dto/orders-query.dto';
-import { UpdateOrderSettingsDto } from './dto/update-order-settings.dto';
-import { Order, OrderItem, OrderSettings, OrderStatus } from './entities';
+import { Order, OrderItem, OrderStatus } from './entities';
 import { Product } from '../products/entities';
 import { User } from '../auth/entities/user.entity';
 import { PaginationDto } from '../common/dtos/pagination.dto';
-
-const DEFAULT_MAX_TOTAL_KG = 10;
-const DEFAULT_MAX_ITEMS = 2;
 
 @Injectable()
 export class OrdersService {
@@ -44,22 +40,34 @@ export class OrdersService {
     @InjectRepository(Product)
     private readonly productRepository: Repository<Product>,
 
-    @InjectRepository(OrderSettings)
-    private readonly orderSettingsRepository: Repository<OrderSettings>,
+    @InjectRepository(User)
+    private readonly userRepository: Repository<User>,
 
     private readonly dataSource: DataSource,
   ) {}
 
   async create(createOrderDto: CreateOrderDto, user: User) {
     const { items } = createOrderDto;
-    const isSuperUser = this.isSuperOrderingUser(user);
-    const settings = await this.getSettings();
+    const orderingUser =
+      (await this.userRepository.findOne({
+        where: { id: user.id },
+        relations: { sector: true },
+      })) || user;
+    const isSuperUser = this.isSuperOrderingUser(orderingUser);
+    const sector = orderingUser?.sector || null;
+    const restrictedSlugs = !isSuperUser && sector && !sector.allowAllProducts
+      ? new Set((sector.allowedProductSlugs || []).map((slug) => slug.toLowerCase()))
+      : null;
     const maxItemsLimit =
-      Number.isFinite(settings.maxItems) && settings.maxItems > 0
-        ? Math.floor(settings.maxItems)
-        : DEFAULT_MAX_ITEMS;
+      typeof sector?.maxItems === 'number' && sector.maxItems > 0
+        ? Math.floor(sector.maxItems)
+        : null;
+    const maxTotalKgLimit =
+      typeof sector?.maxTotalKg === 'number' && sector.maxTotalKg > 0
+        ? Math.floor(sector.maxTotalKg)
+        : null;
 
-    if (!user.isActive) {
+    if (!orderingUser.isActive) {
       throw new ForbiddenException(
         'Tu cuenta esta deshabilitada para hacer pedidos. Comunicate con un supervisor',
       );
@@ -69,9 +77,19 @@ export class OrdersService {
       throw new BadRequestException('El pedido debe contener productos');
     }
 
-    if (!isSuperUser && items.length > maxItemsLimit) {
+    if (
+      !isSuperUser &&
+      typeof maxItemsLimit === 'number' &&
+      items.length > maxItemsLimit
+    ) {
       throw new BadRequestException(
         `Solo se permiten ${maxItemsLimit} productos por pedido`,
+      );
+    }
+
+    if (!isSuperUser && restrictedSlugs && restrictedSlugs.size === 0) {
+      throw new BadRequestException(
+        'Tu sector no tiene productos habilitados para realizar pedidos',
       );
     }
 
@@ -79,7 +97,7 @@ export class OrdersService {
       const startOfWeek = this.getStartOfWeek();
       const existingOrder = await this.orderRepository.findOne({
         where: {
-          user: { id: user.id },
+          user: { id: orderingUser.id },
           createdAt: MoreThanOrEqual(startOfWeek),
         },
         order: { createdAt: 'DESC' },
@@ -124,6 +142,16 @@ export class OrdersService {
         );
       }
 
+      if (
+        !isSuperUser &&
+        restrictedSlugs &&
+        !restrictedSlugs.has(product.slug?.toLowerCase())
+      ) {
+        throw new BadRequestException(
+          `El producto ${product.title} no esta habilitado para tu sector`,
+        );
+      }
+
       if (!isSuperUser && item.kg > product.maxKgPerOrder) {
         throw new BadRequestException(
           `No puedes pedir mas de ${product.maxKgPerOrder} kg de ${product.title}`,
@@ -156,42 +184,49 @@ export class OrdersService {
       });
     });
 
-    if (!isSuperUser && totalKg > settings.maxTotalKg) {
+    if (
+      !isSuperUser &&
+      typeof maxTotalKgLimit === 'number' &&
+      totalKg > maxTotalKgLimit
+    ) {
       throw new BadRequestException(
-        `El total no puede superar los ${settings.maxTotalKg} kg`,
+        `El total no puede superar los ${maxTotalKgLimit} kg`,
       );
     }
 
+    const preparationWeekday =
+      typeof sector?.preparationWeekday === 'number'
+        ? sector.preparationWeekday
+        : null;
+    const preparationDate = this.resolvePreparationDate(
+      new Date(),
+      preparationWeekday,
+    );
+
     try {
       const order = this.orderRepository.create({
-        user,
+        user: orderingUser,
         items: orderItems,
         totalKg,
         totalPrice,
         status: OrderStatus.Pending,
+        sectorIdSnapshot: sector?.id || null,
+        sectorTitleSnapshot: sector?.title || null,
+        sectorColorSnapshot: sector?.color || null,
+        preparationWeekdaySnapshot: preparationWeekday,
+        preparationDate,
       });
 
       const savedOrder = await this.orderRepository.save(order);
 
       const fullOrder = await this.orderRepository.findOne({
-        where: { id: savedOrder.id, user: { id: user.id } },
+        where: { id: savedOrder.id, user: { id: orderingUser.id } },
       });
 
       return this.mapOrderResponse(fullOrder);
     } catch (error) {
       this.handleDBExceptions(error);
     }
-  }
-
-  async getSettings() {
-    return this.getOrCreateSettings();
-  }
-
-  async updateSettings(updateOrderSettingsDto: UpdateOrderSettingsDto) {
-    const settings = await this.getOrCreateSettings();
-    settings.maxTotalKg = updateOrderSettingsDto.maxTotalKg;
-    settings.maxItems = updateOrderSettingsDto.maxItems;
-    return this.orderSettingsRepository.save(settings);
   }
 
   async findAllByUser(user: User, queryDto: OrdersQueryDto) {
@@ -232,6 +267,8 @@ export class OrdersService {
       product,
       fromDate,
       toDate,
+      sectorId,
+      preparationDate,
     } = queryDto;
     const safeLimit = Math.max(1, limit);
     const safeOffset = Math.max(0, offset);
@@ -240,6 +277,7 @@ export class OrdersService {
     const queryBuilder = this.orderRepository
       .createQueryBuilder('order')
       .leftJoinAndSelect('order.user', 'user')
+      .leftJoinAndSelect('user.sector', 'sector')
       .leftJoinAndSelect('order.items', 'item')
       .leftJoinAndSelect('item.product', 'product')
       .orderBy('order.createdAt', 'DESC')
@@ -280,6 +318,40 @@ export class OrdersService {
 
     if (to) {
       queryBuilder.andWhere('order.createdAt <= :toDate', { toDate: to });
+    }
+
+    if (sectorId) {
+      queryBuilder.andWhere(
+        'COALESCE(order.sectorIdSnapshot, user.sectorId) = :sectorId',
+        { sectorId },
+      );
+    }
+
+    if (preparationDate) {
+      queryBuilder.andWhere(
+        `(
+          order.preparationDate = :preparationDate
+          OR (
+            order.preparationDate IS NULL
+            AND sector.preparationWeekday IS NOT NULL
+            AND (
+              (
+                sector.preparationWeekday = -1
+                AND DATE_TRUNC('day', order.createdAt)::date = :preparationDate::date
+              )
+              OR (
+                sector.preparationWeekday BETWEEN 0 AND 6
+                AND (
+                  DATE_TRUNC('day', order.createdAt)
+                  - (EXTRACT(DOW FROM order.createdAt)::int * INTERVAL '1 day')
+                  + (sector.preparationWeekday * INTERVAL '1 day')
+                )::date = :preparationDate::date
+              )
+            )
+          )
+        )`,
+        { preparationDate },
+      );
     }
 
     const [orders, totalOrders] = await queryBuilder.getManyAndCount();
@@ -661,6 +733,15 @@ export class OrdersService {
           employeeNumber: user.employeeNumber,
           nationalId: user.nationalId,
           isSuperUser: user.isSuperUser,
+          sectorId: user.sectorId || null,
+          sector: user.sector
+            ? {
+                id: user.sector.id,
+                title: user.sector.title,
+                color: user.sector.color,
+                preparationWeekday: user.sector.preparationWeekday,
+              }
+            : null,
         }
       : undefined;
 
@@ -691,24 +772,6 @@ export class OrdersService {
     );
   }
 
-  private async getOrCreateSettings() {
-    const [existingSettings] = await this.orderSettingsRepository.find({
-      order: { id: 'ASC' },
-      take: 1,
-    });
-    let settings = existingSettings;
-
-    if (!settings) {
-      settings = this.orderSettingsRepository.create({
-        maxTotalKg: DEFAULT_MAX_TOTAL_KG,
-        maxItems: DEFAULT_MAX_ITEMS,
-      });
-      settings = await this.orderSettingsRepository.save(settings);
-    }
-
-    return settings;
-  }
-
   private isSuperOrderingUser(user: User) {
     return (
       user?.isSuperUser === true ||
@@ -723,6 +786,21 @@ export class OrdersService {
     const dayOfWeek = startOfWeek.getDay();
     startOfWeek.setDate(startOfWeek.getDate() - dayOfWeek);
     return startOfWeek;
+  }
+
+  private resolvePreparationDate(
+    reference: Date,
+    preparationWeekday: number | null,
+  ): string | null {
+    if (typeof preparationWeekday !== 'number') return null;
+    if (preparationWeekday === -1) {
+      return this.formatDateKey(reference);
+    }
+    if (preparationWeekday < 0 || preparationWeekday > 6) return null;
+    const base = this.getStartOfWeek(reference);
+    const preparation = new Date(base);
+    preparation.setDate(base.getDate() + preparationWeekday);
+    return this.formatDateKey(preparation);
   }
 
   private buildDateRange(fromDate?: string, toDate?: string) {

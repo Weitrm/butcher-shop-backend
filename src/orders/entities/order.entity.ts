@@ -47,6 +47,21 @@ export class Order {
   @Column('text', { default: OrderStatus.Pending })
   status: OrderStatus;
 
+  @Column('uuid', { nullable: true })
+  sectorIdSnapshot: string | null;
+
+  @Column('text', { nullable: true })
+  sectorTitleSnapshot: string | null;
+
+  @Column('text', { nullable: true })
+  sectorColorSnapshot: string | null;
+
+  @Column('int', { nullable: true })
+  preparationWeekdaySnapshot: number | null;
+
+  @Column('date', { nullable: true })
+  preparationDate: string | null;
+
   @CreateDateColumn()
   createdAt: Date;
 

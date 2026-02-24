@@ -2,6 +2,7 @@ import {
   IsBoolean,
   IsOptional,
   IsString,
+  IsUUID,
   Matches,
   MaxLength,
   MinLength,
@@ -39,4 +40,8 @@ export class CreateUserDto {
   @IsBoolean()
   @IsOptional()
   isSuperUser?: boolean;
+
+  @IsOptional()
+  @IsUUID()
+  sectorId?: string;
 }

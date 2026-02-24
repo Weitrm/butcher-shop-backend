@@ -9,6 +9,7 @@ import { FilesModule } from './files/files.module';
 import { AuthModule } from './auth/auth.module';
 import { MessagesWsModule } from './messages-ws/messages-ws.module';
 import { OrdersModule } from './orders/orders.module';
+import { SectorsModule } from './sectors/sectors.module';
 
 const isProd = process.env.STAGE === 'prod';
 
@@ -46,6 +47,8 @@ const isProd = process.env.STAGE === 'prod';
     MessagesWsModule,
 
     OrdersModule,
+
+    SectorsModule,
 
   ],
 })

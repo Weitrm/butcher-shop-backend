@@ -5,7 +5,6 @@ import { OrdersService } from './orders.service';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
 import { OrdersQueryDto } from './dto/orders-query.dto';
-import { UpdateOrderSettingsDto } from './dto/update-order-settings.dto';
 import { Auth, GetUser } from '../auth/decorators';
 import { User } from '../auth/entities/user.entity';
 import { ValidRoles } from '../auth/interfaces';
@@ -41,19 +40,6 @@ export class OrdersController {
   @ApiResponse({ status: 200, description: 'Orders list (admin)' })
   findAllAdmin(@Query() queryDto: OrdersQueryDto) {
     return this.ordersService.findAllAdmin(queryDto);
-  }
-
-  @Get('settings')
-  @ApiResponse({ status: 200, description: 'Order settings' })
-  getSettings() {
-    return this.ordersService.getSettings();
-  }
-
-  @Patch('settings')
-  @Auth(ValidRoles.admin)
-  @ApiResponse({ status: 200, description: 'Order settings updated' })
-  updateSettings(@Body() updateOrderSettingsDto: UpdateOrderSettingsDto) {
-    return this.ordersService.updateSettings(updateOrderSettingsDto);
   }
 
   @Patch(':id/status')

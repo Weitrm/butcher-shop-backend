@@ -1,4 +1,4 @@
-import { IsIn, IsOptional, IsString, Matches } from 'class-validator';
+import { IsIn, IsOptional, IsString, IsUUID, Matches } from 'class-validator';
 
 import { PaginationDto } from '../../common/dtos/pagination.dto';
 
@@ -24,4 +24,12 @@ export class OrdersQueryDto extends PaginationDto {
   @IsOptional()
   @Matches(DATE_ONLY_PATTERN, { message: 'toDate must be YYYY-MM-DD' })
   toDate?: string;
+
+  @IsOptional()
+  @IsUUID()
+  sectorId?: string;
+
+  @IsOptional()
+  @Matches(DATE_ONLY_PATTERN, { message: 'preparationDate must be YYYY-MM-DD' })
+  preparationDate?: string;
 }

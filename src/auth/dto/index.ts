@@ -3,3 +3,5 @@ export { CreateUserDto } from './create-user.dto';
 export { UpdateUserStatusDto } from './update-user-status.dto';
 export { UpdateUserPasswordDto } from './update-user-password.dto';
 export { UpdateUserSuperUserDto } from './update-user-super-user.dto';
+export { UpdateUserSectorDto } from './update-user-sector.dto';
+export { UsersQueryDto } from './users-query.dto';
