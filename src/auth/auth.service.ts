@@ -18,6 +18,7 @@ import { Sector } from '../sectors/entities';
 
 const LEGACY_SUPER_ROLE = 'super';
 const SUPER_USER_ROLE = 'super-user';
+const ADMIN_ROLE = 'admin';
 
 @Injectable()
 export class AuthService {
@@ -174,6 +175,39 @@ export class AuthService {
     return this.normalizeSuperUser(user);
   }
 
+  async updateAdminRole(userId: string, isAdmin: boolean, actor: User) {
+    const user = await this.userRepository.findOneBy({ id: userId });
+    if (!user) {
+      throw new NotFoundException(`Usuario con id ${userId} no encontrado`);
+    }
+
+    const isCurrentlyAdmin = (user.roles || []).includes(ADMIN_ROLE);
+    if (isAdmin === isCurrentlyAdmin) {
+      return this.normalizeSuperUser(user);
+    }
+
+    if (!isAdmin && isCurrentlyAdmin) {
+      if (user.id === actor.id) {
+        throw new BadRequestException(
+          'No puedes quitarte el permiso de admin a ti mismo',
+        );
+      }
+
+      if (user.isActive) {
+        const activeAdmins = await this.countActiveAdmins();
+        if (activeAdmins <= 1) {
+          throw new BadRequestException(
+            'No puedes quitar el ultimo admin activo',
+          );
+        }
+      }
+    }
+
+    user.roles = this.toggleRole(user.roles || [], ADMIN_ROLE, isAdmin);
+    await this.userRepository.save(user);
+    return this.normalizeSuperUser(user);
+  }
+
   async updateSector(userId: string, sectorId?: string | null) {
     const user = await this.userRepository.findOneBy({ id: userId });
     if (!user) {
@@ -264,7 +298,7 @@ export class AuthService {
   private async countActiveAdmins(): Promise<number> {
     return this.userRepository
       .createQueryBuilder('user')
-      .where(':role = ANY(user.roles)', { role: 'admin' })
+      .where(':role = ANY(user.roles)', { role: ADMIN_ROLE })
       .andWhere('user.isActive = true')
       .getCount();
   }
@@ -297,6 +331,12 @@ export class AuthService {
     return isSuperUser ? [...withoutLegacy, SUPER_USER_ROLE] : withoutLegacy;
   }
 
+  private toggleRole(currentRoles: string[], role: string, enabled: boolean) {
+    const normalized = Array.from(new Set((currentRoles || []).filter(Boolean)));
+    const withoutRole = normalized.filter((candidate) => candidate !== role);
+    return enabled ? [...withoutRole, role] : withoutRole;
+  }
+
   private normalizeSuperUser(user: User) {
     if (!user) return user;
     const roles = user.roles || [];
@@ -307,4 +347,3 @@ export class AuthService {
     return user;
   }
 }
-

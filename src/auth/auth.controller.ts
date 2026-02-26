@@ -24,6 +24,7 @@ import {
   CreateUserDto,
   LoginUserDto,
   UpdateUserPasswordDto,
+  UpdateUserAdminDto,
   UpdateUserSectorDto,
   UpdateUserStatusDto,
   UpdateUserSuperUserDto,
@@ -90,6 +91,16 @@ export class AuthController {
       id,
       updateUserSuperUserDto.isSuperUser,
     );
+  }
+
+  @Patch('users/:id/admin')
+  @Auth(ValidRoles.admin)
+  updateUserAdmin(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() updateUserAdminDto: UpdateUserAdminDto,
+    @GetUser() user: User,
+  ) {
+    return this.authService.updateAdminRole(id, updateUserAdminDto.isAdmin, user);
   }
 
   @Patch('users/:id/sector')
