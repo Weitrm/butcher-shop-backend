@@ -120,6 +120,10 @@ export class SectorsService {
       'maxTotalKg',
     );
     const hasMaxItems = Object.prototype.hasOwnProperty.call(payload, 'maxItems');
+    const hasMaxOrdersPerWeek = Object.prototype.hasOwnProperty.call(
+      payload,
+      'maxOrdersPerWeek',
+    );
     const hasColor = Object.prototype.hasOwnProperty.call(payload, 'color');
 
     return {
@@ -128,6 +132,9 @@ export class SectorsService {
       ...(hasColor ? { color: normalizeColor(payload.color) } : {}),
       ...(hasMaxTotalKg ? { maxTotalKg: payload.maxTotalKg || null } : {}),
       ...(hasMaxItems ? { maxItems: payload.maxItems || null } : {}),
+      ...(hasMaxOrdersPerWeek
+        ? { maxOrdersPerWeek: payload.maxOrdersPerWeek || null }
+        : {}),
       ...(hasAllowedProducts
         ? { allowedProductSlugs: normalizeSlugs(payload.allowedProductSlugs) }
         : {}),

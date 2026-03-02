@@ -6,3 +6,4 @@ export { UpdateUserSuperUserDto } from './update-user-super-user.dto';
 export { UpdateUserAdminDto } from './update-user-admin.dto';
 export { UpdateUserSectorDto } from './update-user-sector.dto';
 export { UsersQueryDto } from './users-query.dto';
+export { CreateUserWeeklyOrderExceptionDto } from './create-user-weekly-order-exception.dto';

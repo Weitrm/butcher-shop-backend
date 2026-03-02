@@ -22,6 +22,7 @@ import { Auth, GetUser, RawHeaders } from './decorators';
 import { RoleProtected } from './decorators/role-protected.decorator';
 import {
   CreateUserDto,
+  CreateUserWeeklyOrderExceptionDto,
   LoginUserDto,
   UpdateUserPasswordDto,
   UpdateUserAdminDto,
@@ -110,6 +111,20 @@ export class AuthController {
     @Body() updateUserSectorDto: UpdateUserSectorDto,
   ) {
     return this.authService.updateSector(id, updateUserSectorDto.sectorId);
+  }
+
+  @Post('users/:id/weekly-order-exceptions')
+  @Auth(ValidRoles.admin)
+  createWeeklyOrderException(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() createUserWeeklyOrderExceptionDto: CreateUserWeeklyOrderExceptionDto,
+    @GetUser() user: User,
+  ) {
+    return this.authService.createWeeklyOrderException(
+      id,
+      createUserWeeklyOrderExceptionDto,
+      user,
+    );
   }
 
   @Delete('users/:id')

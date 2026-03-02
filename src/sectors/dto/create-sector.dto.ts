@@ -39,6 +39,11 @@ export class CreateSectorDto {
   maxItems?: number;
 
   @IsOptional()
+  @IsInt()
+  @Min(1)
+  maxOrdersPerWeek?: number;
+
+  @IsOptional()
   @IsBoolean()
   allowAllProducts?: boolean;
 

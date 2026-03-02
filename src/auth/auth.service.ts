@@ -12,9 +12,16 @@ import { DataSource, Repository } from 'typeorm';
 import * as bcrypt from 'bcrypt';
 
 import { User } from './entities/user.entity';
-import { CreateUserDto, LoginUserDto, UsersQueryDto } from './dto';
+import {
+  CreateUserDto,
+  CreateUserWeeklyOrderExceptionDto,
+  LoginUserDto,
+  UsersQueryDto,
+} from './dto';
 import { JwtPayload } from './interfaces/jwt-payload.interface';
 import { Sector } from '../sectors/entities';
+import { Order } from '../orders/entities';
+import { UserWeeklyOrderException } from './entities/user-weekly-order-exception.entity';
 
 const LEGACY_SUPER_ROLE = 'super';
 const SUPER_USER_ROLE = 'super-user';
@@ -28,6 +35,12 @@ export class AuthService {
 
     @InjectRepository(Sector)
     private readonly sectorRepository: Repository<Sector>,
+
+    @InjectRepository(Order)
+    private readonly orderRepository: Repository<Order>,
+
+    @InjectRepository(UserWeeklyOrderException)
+    private readonly weeklyOrderExceptionRepository: Repository<UserWeeklyOrderException>,
 
     private readonly jwtService: JwtService,
     private readonly dataSource: DataSource,
@@ -57,7 +70,7 @@ export class AuthService {
       delete user.password;
 
       return {
-        user,
+        user: await this.enrichUserWithWeeklyState(this.normalizeSuperUser(user)),
         token: this.getJwtToken({ id: user.id }),
       };
     } catch (error) {
@@ -100,7 +113,7 @@ export class AuthService {
     delete user.password;
 
     return {
-      user,
+      user: await this.enrichUserWithWeeklyState(user),
       token: this.getJwtToken({ id: user.id }),
     };
   }
@@ -109,7 +122,7 @@ export class AuthService {
     this.normalizeSuperUser(user);
 
     return {
-      user,
+      user: await this.enrichUserWithWeeklyState(user),
       token: this.getJwtToken({ id: user.id }),
     };
   }
@@ -131,7 +144,10 @@ export class AuthService {
     }
 
     const users = await usersQuery.getMany();
-    return users.map((listedUser) => this.normalizeSuperUser(listedUser));
+    const normalizedUsers = users.map((listedUser) =>
+      this.normalizeSuperUser(listedUser),
+    );
+    return this.enrichUsersWithWeeklyState(normalizedUsers);
   }
 
   async updateStatus(userId: string, isActive: boolean, actor: User) {
@@ -159,7 +175,7 @@ export class AuthService {
     user.isActive = isActive;
     await this.userRepository.save(user);
 
-    return this.normalizeSuperUser(user);
+    return this.enrichUserWithWeeklyState(this.normalizeSuperUser(user));
   }
 
   async updateSuperUser(userId: string, isSuperUser: boolean) {
@@ -172,7 +188,7 @@ export class AuthService {
     user.roles = this.getRolesForSuperFlag(isSuperUser, user.roles || []);
     await this.userRepository.save(user);
 
-    return this.normalizeSuperUser(user);
+    return this.enrichUserWithWeeklyState(this.normalizeSuperUser(user));
   }
 
   async updateAdminRole(userId: string, isAdmin: boolean, actor: User) {
@@ -205,7 +221,7 @@ export class AuthService {
 
     user.roles = this.toggleRole(user.roles || [], ADMIN_ROLE, isAdmin);
     await this.userRepository.save(user);
-    return this.normalizeSuperUser(user);
+    return this.enrichUserWithWeeklyState(this.normalizeSuperUser(user));
   }
 
   async updateSector(userId: string, sectorId?: string | null) {
@@ -218,7 +234,7 @@ export class AuthService {
       user.sectorId = null;
       user.sector = null;
       await this.userRepository.save(user);
-      return this.normalizeSuperUser(user);
+      return this.enrichUserWithWeeklyState(this.normalizeSuperUser(user));
     }
 
     const sector = await this.sectorRepository.findOneBy({ id: sectorId });
@@ -229,7 +245,44 @@ export class AuthService {
     user.sectorId = sector.id;
     user.sector = sector;
     await this.userRepository.save(user);
-    return this.normalizeSuperUser(user);
+    return this.enrichUserWithWeeklyState(this.normalizeSuperUser(user));
+  }
+
+  async createWeeklyOrderException(
+    userId: string,
+    createUserWeeklyOrderExceptionDto: CreateUserWeeklyOrderExceptionDto,
+    actor: User,
+  ) {
+    const user = await this.userRepository.findOneBy({ id: userId });
+    if (!user) {
+      throw new NotFoundException(`Usuario con id ${userId} no encontrado`);
+    }
+
+    this.normalizeSuperUser(user);
+    if (user.isSuperUser) {
+      throw new BadRequestException(
+        'Los super usuarios no necesitan pedidos extra semanales',
+      );
+    }
+
+    const weekStartDate = this.formatDateKey(this.getStartOfWeek());
+    const reason =
+      createUserWeeklyOrderExceptionDto.reason?.trim() ||
+      'Aprobado manualmente desde el panel de usuarios';
+
+    const weeklyOrderException = this.weeklyOrderExceptionRepository.create({
+      userId: user.id,
+      user,
+      weekStartDate,
+      extraOrders: createUserWeeklyOrderExceptionDto.extraOrders,
+      reason,
+      grantedByUserId: actor.id,
+      grantedByUser: actor,
+    });
+
+    await this.weeklyOrderExceptionRepository.save(weeklyOrderException);
+
+    return this.enrichUserWithWeeklyState(user);
   }
 
   async updatePassword(userId: string, password: string) {
@@ -242,7 +295,7 @@ export class AuthService {
     await this.userRepository.save(user);
 
     delete user.password;
-    return this.normalizeSuperUser(user);
+    return this.enrichUserWithWeeklyState(this.normalizeSuperUser(user));
   }
 
   async removeUser(userId: string, actor: User) {
@@ -295,6 +348,88 @@ export class AuthService {
     return { id: userId };
   }
 
+  private async enrichUserWithWeeklyState(user: User) {
+    if (!user?.id) return user;
+
+    const { extraOrdersByUserId, ordersCountByUserId } =
+      await this.loadWeeklyOrderState([user.id]);
+
+    return Object.assign(user, {
+      currentWeekExtraOrders: extraOrdersByUserId.get(user.id) || 0,
+      currentWeekOrdersCount: ordersCountByUserId.get(user.id) || 0,
+    });
+  }
+
+  private async enrichUsersWithWeeklyState(users: User[]) {
+    if (!users.length) return users;
+
+    const userIds = users.map((user) => user.id).filter(Boolean);
+    const { extraOrdersByUserId, ordersCountByUserId } =
+      await this.loadWeeklyOrderState(userIds);
+
+    return users.map((user) =>
+      Object.assign(user, {
+        currentWeekExtraOrders: extraOrdersByUserId.get(user.id) || 0,
+        currentWeekOrdersCount: ordersCountByUserId.get(user.id) || 0,
+      }),
+    );
+  }
+
+  private async loadWeeklyOrderState(userIds: string[]) {
+    if (!userIds.length) {
+      return {
+        extraOrdersByUserId: new Map<string, number>(),
+        ordersCountByUserId: new Map<string, number>(),
+      };
+    }
+
+    const startOfWeek = this.getStartOfWeek();
+    const weekStartDate = this.formatDateKey(startOfWeek);
+
+    const [ordersCountRaw, extraOrdersRaw] = await Promise.all([
+      this.orderRepository.query(
+        `
+          SELECT "userId", COUNT(*)::int AS "count"
+          FROM "orders"
+          WHERE "userId" = ANY($1)
+            AND "createdAt" >= $2
+          GROUP BY "userId"
+        `,
+        [userIds, startOfWeek],
+      ),
+      this.weeklyOrderExceptionRepository.query(
+        `
+          SELECT "userId", COALESCE(SUM("extraOrders"), 0)::int AS "extraOrders"
+          FROM "user_weekly_order_exceptions"
+          WHERE "userId" = ANY($1)
+            AND "weekStartDate" = $2::date
+          GROUP BY "userId"
+        `,
+        [userIds, weekStartDate],
+      ),
+    ]);
+
+    const ordersCountByUserId = new Map<string, number>(
+      (ordersCountRaw || []).map((row: { userId: string; count: number | string }) => [
+        row.userId,
+        Number(row.count || 0),
+      ]),
+    );
+    const extraOrdersByUserId = new Map<string, number>(
+      (
+        extraOrdersRaw || []
+      ).map((row: { userId: string; extraOrders: number | string }) => [
+        row.userId,
+        Number(row.extraOrders || 0),
+      ]),
+    );
+
+    return {
+      extraOrdersByUserId,
+      ordersCountByUserId,
+    };
+  }
+
   private async countActiveAdmins(): Promise<number> {
     return this.userRepository
       .createQueryBuilder('user')
@@ -335,6 +470,21 @@ export class AuthService {
     const normalized = Array.from(new Set((currentRoles || []).filter(Boolean)));
     const withoutRole = normalized.filter((candidate) => candidate !== role);
     return enabled ? [...withoutRole, role] : withoutRole;
+  }
+
+  private getStartOfWeek(reference = new Date()) {
+    const startOfWeek = new Date(reference);
+    startOfWeek.setHours(0, 0, 0, 0);
+    const dayOfWeek = startOfWeek.getDay();
+    startOfWeek.setDate(startOfWeek.getDate() - dayOfWeek);
+    return startOfWeek;
+  }
+
+  private formatDateKey(date: Date) {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
   }
 
   private normalizeSuperUser(user: User) {

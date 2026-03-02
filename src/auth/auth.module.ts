@@ -7,8 +7,10 @@ import { JwtModule } from '@nestjs/jwt';
 import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
 import { User } from './entities/user.entity';
+import { UserWeeklyOrderException } from './entities/user-weekly-order-exception.entity';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { Sector } from '../sectors/entities';
+import { Order } from '../orders/entities';
 
 @Module({
   controllers: [AuthController],
@@ -16,7 +18,7 @@ import { Sector } from '../sectors/entities';
   imports: [
     ConfigModule,
 
-    TypeOrmModule.forFeature([ User, Sector ]),
+    TypeOrmModule.forFeature([ User, Sector, Order, UserWeeklyOrderException ]),
 
     PassportModule.register({ defaultStrategy: 'jwt' }),
 

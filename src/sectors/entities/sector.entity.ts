@@ -34,6 +34,9 @@ export class Sector {
   @Column('int', { nullable: true })
   maxItems: number | null;
 
+  @Column('int', { nullable: true, default: 1 })
+  maxOrdersPerWeek: number | null;
+
   @Column('bool', { default: true })
   allowAllProducts: boolean;
 

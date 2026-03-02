@@ -24,6 +24,7 @@ import { OrdersQueryDto } from './dto/orders-query.dto';
 import { Order, OrderItem, OrderStatus } from './entities';
 import { Product } from '../products/entities';
 import { User } from '../auth/entities/user.entity';
+import { UserWeeklyOrderException } from '../auth/entities/user-weekly-order-exception.entity';
 import { PaginationDto } from '../common/dtos/pagination.dto';
 
 @Injectable()
@@ -42,6 +43,9 @@ export class OrdersService {
 
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
+
+    @InjectRepository(UserWeeklyOrderException)
+    private readonly weeklyOrderExceptionRepository: Repository<UserWeeklyOrderException>,
 
     private readonly dataSource: DataSource,
   ) {}
@@ -95,17 +99,23 @@ export class OrdersService {
 
     if (!isSuperUser) {
       const startOfWeek = this.getStartOfWeek();
-      const existingOrder = await this.orderRepository.findOne({
-        where: {
-          user: { id: orderingUser.id },
-          createdAt: MoreThanOrEqual(startOfWeek),
-        },
-        order: { createdAt: 'DESC' },
-      });
+      const [ordersThisWeek, extraOrdersThisWeek] = await Promise.all([
+        this.orderRepository.count({
+          where: {
+            user: { id: orderingUser.id },
+            createdAt: MoreThanOrEqual(startOfWeek),
+          },
+        }),
+        this.getCurrentWeekExtraOrders(orderingUser.id, startOfWeek),
+      ]);
+      const weeklyLimit = this.getWeeklyOrderLimit(orderingUser);
 
-      if (existingOrder) {
+      if (
+        typeof weeklyLimit === 'number' &&
+        ordersThisWeek >= weeklyLimit + extraOrdersThisWeek
+      ) {
         throw new BadRequestException(
-          'Solo puedes realizar un pedido por semana. El limite se reinicia los domingos.',
+          'Ya alcanzaste el limite de pedidos de esta semana.',
         );
       }
     }
@@ -780,6 +790,35 @@ export class OrdersService {
     );
   }
 
+  private getWeeklyOrderLimit(user: User) {
+    if (!user) return 1;
+
+    if (!user.sector) {
+      return 1;
+    }
+
+    const parsed = Number(user.sector.maxOrdersPerWeek);
+    if (!Number.isFinite(parsed) || parsed < 1) {
+      return null;
+    }
+
+    return Math.floor(parsed);
+  }
+
+  private async getCurrentWeekExtraOrders(userId: string, startOfWeek: Date) {
+    const weekStartDate = this.formatDateKey(startOfWeek);
+    const result = await this.weeklyOrderExceptionRepository
+      .createQueryBuilder('weeklyException')
+      .select('COALESCE(SUM(weeklyException.extraOrders), 0)', 'total')
+      .where('weeklyException.userId = :userId', { userId })
+      .andWhere('weeklyException.weekStartDate = :weekStartDate', {
+        weekStartDate,
+      })
+      .getRawOne<{ total: string }>();
+
+    return Number(result?.total || 0);
+  }
+
   private getStartOfWeek(reference = new Date()) {
     const startOfWeek = new Date(reference);
     startOfWeek.setHours(0, 0, 0, 0);
@@ -817,6 +856,24 @@ export class OrdersService {
   }
 
   private parseDateOnly(value: string, endOfDay: boolean) {
+    const isoDateMatch = value?.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!isoDateMatch) {
+      const parsedDate = new Date(value);
+      if (Number.isNaN(parsedDate.getTime())) {
+        throw new BadRequestException(
+          'Formato de fecha invalido. Usa YYYY-MM-DD',
+        );
+      }
+
+      if (endOfDay) {
+        parsedDate.setUTCHours(23, 59, 59, 999);
+      } else {
+        parsedDate.setUTCHours(0, 0, 0, 0);
+      }
+
+      return parsedDate;
+    }
+
     const [yearRaw, monthRaw, dayRaw] = value.split('-');
     const year = Number(yearRaw);
     const month = Number(monthRaw);
