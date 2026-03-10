@@ -42,6 +42,20 @@ export class OrdersController {
     return this.ordersService.findAllAdmin(queryDto);
   }
 
+  @Get('admin/summary')
+  @Auth(ValidRoles.admin)
+  @ApiResponse({ status: 200, description: 'Orders summary (admin)' })
+  getAdminSummary(@Query() queryDto: OrdersQueryDto) {
+    return this.ordersService.getAdminSummary(queryDto);
+  }
+
+  @Get('admin/history-summary')
+  @Auth(ValidRoles.admin)
+  @ApiResponse({ status: 200, description: 'Orders history summary (admin)' })
+  getAdminHistorySummary(@Query() queryDto: OrdersQueryDto) {
+    return this.ordersService.getAdminHistorySummary(queryDto);
+  }
+
   @Patch(':id/status')
   @Auth(ValidRoles.admin)
   @ApiResponse({ status: 200, description: 'Order status updated' })

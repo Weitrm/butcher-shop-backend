@@ -16,6 +16,7 @@ import {
   MoreThanOrEqual,
   Not,
   Repository,
+  SelectQueryBuilder,
 } from 'typeorm';
 
 import { CreateOrderDto } from './dto/create-order.dto';
@@ -272,17 +273,10 @@ export class OrdersService {
     const {
       limit = 10,
       offset = 0,
-      scope = 'all',
-      user,
-      product,
-      fromDate,
-      toDate,
-      sectorId,
-      preparationDate,
+      ...filters
     } = queryDto;
     const safeLimit = Math.max(1, limit);
     const safeOffset = Math.max(0, offset);
-    const { from, to } = this.buildDateRange(fromDate, toDate);
 
     const queryBuilder = this.orderRepository
       .createQueryBuilder('order')
@@ -295,74 +289,7 @@ export class OrdersService {
       .take(safeLimit)
       .skip(safeOffset);
 
-    if (scope === 'week' || scope === 'history') {
-      const startOfWeek = this.getStartOfWeek();
-      if (scope === 'week') {
-        queryBuilder.andWhere('order.createdAt >= :startOfWeek', {
-          startOfWeek,
-        });
-      } else {
-        queryBuilder.andWhere('order.createdAt < :startOfWeek', {
-          startOfWeek,
-        });
-      }
-    }
-
-    if (user) {
-      queryBuilder.andWhere(
-        '(user.fullName ILIKE :user OR user.employeeNumber ILIKE :user OR user.nationalId ILIKE :user)',
-        { user: `%${user}%` },
-      );
-    }
-
-    if (product) {
-      queryBuilder.andWhere(
-        '(product.title ILIKE :product OR product.slug ILIKE :product)',
-        { product: `%${product}%` },
-      );
-    }
-
-    if (from) {
-      queryBuilder.andWhere('order.createdAt >= :fromDate', { fromDate: from });
-    }
-
-    if (to) {
-      queryBuilder.andWhere('order.createdAt <= :toDate', { toDate: to });
-    }
-
-    if (sectorId) {
-      queryBuilder.andWhere(
-        'COALESCE(order.sectorIdSnapshot, user.sectorId) = :sectorId',
-        { sectorId },
-      );
-    }
-
-    if (preparationDate) {
-      queryBuilder.andWhere(
-        `(
-          order.preparationDate = :preparationDate
-          OR (
-            order.preparationDate IS NULL
-            AND sector.preparationWeekday IS NOT NULL
-            AND (
-              (
-                sector.preparationWeekday = -1
-                AND DATE_TRUNC('day', order.createdAt)::date = :preparationDate::date
-              )
-              OR (
-                sector.preparationWeekday BETWEEN 0 AND 6
-                AND (
-                  DATE_TRUNC('day', order.createdAt)
-                  - (EXTRACT(DOW FROM order.createdAt)::int * INTERVAL '1 day')
-                  + (sector.preparationWeekday * INTERVAL '1 day')
-                )::date = :preparationDate::date
-              )
-            )
-          )
-        )`,
-        { preparationDate },
-      );
-    }
+    this.applyAdminOrderFilters(queryBuilder, filters);
 
     const [orders, totalOrders] = await queryBuilder.getManyAndCount();
 
@@ -371,6 +298,75 @@ export class OrdersService {
       pages: Math.ceil(totalOrders / safeLimit),
       orders: orders.map((order) => this.mapOrderResponse(order, true)),
     };
+  }
+
+  async getAdminSummary(queryDto: OrdersQueryDto) {
+    const queryBuilder = this.orderRepository
+      .createQueryBuilder('order')
+      .leftJoin('order.user', 'user')
+      .leftJoin('user.sector', 'sector')
+      .leftJoin('order.items', 'item')
+      .leftJoin('item.product', 'product')
+      .select(['order.id', 'order.status'])
+      .distinct(true);
+
+    this.applyAdminOrderFilters(queryBuilder, queryDto);
+
+    const orders = await queryBuilder.getMany();
+    const summary = {
+      total: 0,
+      pending: 0,
+      completed: 0,
+      cancelled: 0,
+    };
+
+    for (const order of orders) {
+      summary.total += 1;
+      if (order.status === OrderStatus.Pending) summary.pending += 1;
+      if (order.status === OrderStatus.Completed) summary.completed += 1;
+      if (order.status === OrderStatus.Cancelled) summary.cancelled += 1;
+    }
+
+    return summary;
+  }
+
+  async getAdminHistorySummary(queryDto: OrdersQueryDto) {
+    const queryBuilder = this.orderRepository
+      .createQueryBuilder('order')
+      .leftJoin('order.user', 'user')
+      .leftJoin('user.sector', 'sector')
+      .leftJoinAndSelect('order.items', 'item')
+      .leftJoin('item.product', 'product')
+      .distinct(true);
+
+    this.applyAdminOrderFilters(queryBuilder, queryDto);
+
+    const orders = await queryBuilder.getMany();
+    const summary = {
+      total: 0,
+      totalKg: 0,
+      totalBoxes: 0,
+      totalPrice: 0,
+      completed: 0,
+      hasBoxOrders: false,
+    };
+
+    for (const order of orders) {
+      summary.total += 1;
+      summary.totalPrice += Number(order.totalPrice || 0);
+      if (order.status === OrderStatus.Completed) summary.completed += 1;
+
+      for (const item of order.items || []) {
+        if (item.isBox) {
+          summary.totalBoxes += Number(item.kg || 0);
+          summary.hasBoxOrders = true;
+        } else {
+          summary.totalKg += Number(item.kg || 0);
+        }
+      }
+    }
+
+    return summary;
   }
 
   async updateStatus(id: string, updateOrderStatusDto: UpdateOrderStatusDto) {
@@ -410,13 +406,30 @@ export class OrdersService {
       }
 
       if (nextStatus === OrderStatus.Completed) {
+        const productIds = Array.from(
+          new Set(
+            (order.items || [])
+              .map((item) => item.product?.id)
+              .filter((productId): productId is string => Boolean(productId)),
+          ),
+        );
+        const lockedProducts = productIds.length
+          ? await queryRunner.manager
+              .createQueryBuilder(Product, 'product')
+              .setLock('pessimistic_write')
+              .where('product.id IN (:...productIds)', { productIds })
+              .getMany()
+          : [];
+        const lockedProductsById = new Map(
+          lockedProducts.map((product) => [product.id, product]),
+        );
+
         for (const item of order.items || []) {
           if (!item.product) {
             throw new BadRequestException('Producto no encontrado en el pedido');
           }
-          const product = await queryRunner.manager.findOne(Product, {
-            where: { id: item.product.id },
-          });
+
+          const product = lockedProductsById.get(item.product.id);
           if (!product) {
             throw new BadRequestException('Producto no encontrado en el pedido');
           }
@@ -428,15 +441,13 @@ export class OrdersService {
         }
 
         for (const item of order.items || []) {
-          const product = await queryRunner.manager.findOne(Product, {
-            where: { id: item.product.id },
-          });
-          if (!product) {
-            throw new BadRequestException('Producto no encontrado en el pedido');
-          }
-          product.stock = product.stock - item.kg;
-          await queryRunner.manager.save(product);
+          if (!item.product) continue;
+          const product = lockedProductsById.get(item.product.id);
+          if (!product) continue;
+          product.stock -= item.kg;
         }
+
+        await queryRunner.manager.save(Product, [...lockedProductsById.values()]);
       }
 
       order.status = nextStatus;
@@ -921,5 +932,118 @@ export class OrdersService {
     const year = date.getFullYear();
     const month = String(date.getMonth() + 1).padStart(2, '0');
     return `${year}-${month}`;
+  }
+
+  private parseOptionalBoolean(value?: string) {
+    if (value === 'true') return true;
+    if (value === 'false') return false;
+    return undefined;
+  }
+
+  private applyAdminOrderFilters(
+    queryBuilder: SelectQueryBuilder<Order>,
+    queryDto: Partial<OrdersQueryDto>,
+  ) {
+    const {
+      scope = 'all',
+      user,
+      product,
+      fromDate,
+      toDate,
+      sectorId,
+      preparationDate,
+      status,
+      hasBoxes,
+    } = queryDto;
+    const { from, to } = this.buildDateRange(fromDate, toDate);
+    const parsedHasBoxes = this.parseOptionalBoolean(hasBoxes);
+
+    if (scope === 'week' || scope === 'history') {
+      const startOfWeek = this.getStartOfWeek();
+      if (scope === 'week') {
+        queryBuilder.andWhere('order.createdAt >= :startOfWeek', {
+          startOfWeek,
+        });
+      } else {
+        queryBuilder.andWhere('order.createdAt < :startOfWeek', {
+          startOfWeek,
+        });
+      }
+    }
+
+    if (user) {
+      queryBuilder.andWhere(
+        '(user.fullName ILIKE :user OR user.employeeNumber ILIKE :user OR user.nationalId ILIKE :user)',
+        { user: `%${user}%` },
+      );
+    }
+
+    if (product) {
+      queryBuilder.andWhere(
+        '(product.title ILIKE :product OR product.slug ILIKE :product)',
+        { product: `%${product}%` },
+      );
+    }
+
+    if (from) {
+      queryBuilder.andWhere('order.createdAt >= :fromDate', { fromDate: from });
+    }
+
+    if (to) {
+      queryBuilder.andWhere('order.createdAt <= :toDate', { toDate: to });
+    }
+
+    if (sectorId) {
+      queryBuilder.andWhere(
+        'COALESCE(order.sectorIdSnapshot, user.sectorId) = :sectorId',
+        { sectorId },
+      );
+    }
+
+    if (preparationDate) {
+      queryBuilder.andWhere(
+        `(
+          order.preparationDate = :preparationDate
+          OR (
+            order.preparationDate IS NULL
+            AND sector.preparationWeekday IS NOT NULL
+            AND (
+              (
+                sector.preparationWeekday = -1
+                AND DATE_TRUNC('day', order.createdAt)::date = :preparationDate::date
+              )
+              OR (
+                sector.preparationWeekday BETWEEN 0 AND 6
+                AND (
+                  DATE_TRUNC('day', order.createdAt)
+                  - (EXTRACT(DOW FROM order.createdAt)::int * INTERVAL '1 day')
+                  + (sector.preparationWeekday * INTERVAL '1 day')
+                )::date = :preparationDate::date
+              )
+            )
+          )
+        )`,
+        { preparationDate },
+      );
+    }
+
+    if (status) {
+      queryBuilder.andWhere('order.status = :status', { status });
+    }
+
+    const hasBoxOrderIdsSubquery = queryBuilder
+      .subQuery()
+      .select('boxitems."orderId"')
+      .from('order_items', 'boxitems')
+      .where('boxitems."isBox" = true')
+      .getQuery();
+
+    if (parsedHasBoxes === true) {
+      queryBuilder.andWhere(`"order"."id" IN (${hasBoxOrderIdsSubquery})`);
+    }
+
+    if (parsedHasBoxes === false) {
+      queryBuilder.andWhere(`"order"."id" NOT IN (${hasBoxOrderIdsSubquery})`);
+    }
   }
 }
