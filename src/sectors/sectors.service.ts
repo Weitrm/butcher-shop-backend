@@ -6,9 +6,8 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, Repository } from 'typeorm';
+import { Repository } from 'typeorm';
 
-import { Product } from '../products/entities';
 import { User } from '../auth/entities/user.entity';
 import { CreateSectorDto, UpdateSectorDto } from './dto';
 import { Sector } from './entities/sector.entity';
@@ -21,16 +20,12 @@ export class SectorsService {
     @InjectRepository(Sector)
     private readonly sectorRepository: Repository<Sector>,
 
-    @InjectRepository(Product)
-    private readonly productRepository: Repository<Product>,
-
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
   ) {}
 
   async create(createSectorDto: CreateSectorDto) {
     const payload = this.normalizePayload(createSectorDto);
-    await this.validateProductSlugs(payload.allowedProductSlugs);
 
     try {
       const sector = this.sectorRepository.create(payload);
@@ -59,8 +54,6 @@ export class SectorsService {
     const payload = this.normalizePayload(updateSectorDto);
     const merged = this.sectorRepository.merge(current, payload);
 
-    await this.validateProductSlugs(merged.allowedProductSlugs);
-
     try {
       return await this.sectorRepository.save(merged);
     } catch (error) {
@@ -83,38 +76,11 @@ export class SectorsService {
     return { id };
   }
 
-  private async validateProductSlugs(slugs?: string[]) {
-    if (!slugs?.length) return;
-    const products = await this.productRepository.find({
-      where: { slug: In(slugs) },
-      select: { slug: true },
-    });
-    const found = new Set((products || []).map((product) => product.slug));
-    const missing = slugs.filter((slug) => !found.has(slug));
-    if (missing.length > 0) {
-      throw new BadRequestException(
-        `Slugs de productos no encontrados: ${missing.join(', ')}`,
-      );
-    }
-  }
-
   private normalizePayload(payload: Partial<CreateSectorDto>) {
-    const normalizeSlugs = (slugs?: string[]) =>
-      Array.from(
-        new Set(
-          (slugs || [])
-            .map((slug) => slug?.trim().toLowerCase())
-            .filter((slug) => Boolean(slug)),
-        ),
-      );
     const normalizeColor = (color?: string) => {
       const normalized = color?.trim().toUpperCase();
       return /^#[0-9A-F]{6}$/.test(normalized || '') ? normalized : '#E2E8F0';
     };
-    const hasAllowedProducts = Object.prototype.hasOwnProperty.call(
-      payload,
-      'allowedProductSlugs',
-    );
     const hasMaxTotalKg = Object.prototype.hasOwnProperty.call(
       payload,
       'maxTotalKg',
@@ -134,9 +100,6 @@ export class SectorsService {
       ...(hasMaxItems ? { maxItems: payload.maxItems || null } : {}),
       ...(hasMaxOrdersPerWeek
         ? { maxOrdersPerWeek: payload.maxOrdersPerWeek || null }
-        : {}),
-      ...(hasAllowedProducts
-        ? { allowedProductSlugs: normalizeSlugs(payload.allowedProductSlugs) }
         : {}),
     };
   }

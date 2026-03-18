@@ -1,5 +1,6 @@
 import { ApiProperty } from '@nestjs/swagger';
 import {
+  ArrayUnique,
   IsArray,
   IsBoolean,
   IsInt,
@@ -7,6 +8,7 @@ import {
   IsOptional,
   IsPositive,
   IsString,
+  IsUUID,
   MinLength,
 } from 'class-validator';
 
@@ -72,5 +74,26 @@ export class CreateProductDto {
     @IsBoolean()
     @IsOptional()
     allowBoxes?: boolean;
+
+    @ApiProperty({
+        required: false,
+        default: true,
+        description: 'When true, the product is visible to all sectors in the new model',
+    })
+    @IsBoolean()
+    @IsOptional()
+    allowAllSectors?: boolean;
+
+    @ApiProperty({
+        required: false,
+        type: [String],
+        description:
+            'List of sector IDs that can view this product when allowAllSectors is false.',
+    })
+    @IsOptional()
+    @IsArray()
+    @ArrayUnique()
+    @IsUUID('4', { each: true })
+    allowedSectorIds?: string[];
 
 }

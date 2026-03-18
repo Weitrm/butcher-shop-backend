@@ -37,12 +37,6 @@ export class Sector {
   @Column('int', { nullable: true, default: 1 })
   maxOrdersPerWeek: number | null;
 
-  @Column('bool', { default: true })
-  allowAllProducts: boolean;
-
-  @Column('text', { array: true, default: [] })
-  allowedProductSlugs: string[];
-
   @OneToMany(() => User, (user) => user.sector)
   users: User[];
 
@@ -57,22 +51,10 @@ export class Sector {
   normalizeFields() {
     this.title = this.title?.trim();
     this.color = this.normalizeColor(this.color);
-    this.allowedProductSlugs = this.normalizeSlugs(this.allowedProductSlugs);
   }
 
   private normalizeColor(color?: string) {
     const normalized = color?.trim().toUpperCase();
     return /^#[0-9A-F]{6}$/.test(normalized || '') ? normalized : '#E2E8F0';
-  }
-
-  private normalizeSlugs(slugs?: string[]) {
-    if (!Array.isArray(slugs)) return [];
-    return Array.from(
-      new Set(
-        slugs
-          .map((slug) => slug?.trim().toLowerCase())
-          .filter((slug) => Boolean(slug)),
-      ),
-    );
   }
 }

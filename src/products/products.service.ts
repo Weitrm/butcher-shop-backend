@@ -9,7 +9,9 @@ import { InjectRepository } from '@nestjs/typeorm';
 import {
   Brackets,
   DataSource,
+  In,
   Repository,
+  SelectQueryBuilder,
 } from 'typeorm';
 
 import { CreateProductDto } from './dto/create-product.dto';
@@ -19,6 +21,7 @@ import { PaginationDto } from 'src/common/dtos/pagination.dto';
 import { validate as isUUID } from 'uuid';
 import { ProductImage, Product } from './entities';
 import { User } from '../auth/entities/user.entity';
+import { Sector } from '../sectors/entities';
 
 @Injectable()
 export class ProductsService {
@@ -34,15 +37,31 @@ export class ProductsService {
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
 
+    @InjectRepository(Sector)
+    private readonly sectorRepository: Repository<Sector>,
+
     private readonly dataSource: DataSource,
   ) {}
 
   async create(createProductDto: CreateProductDto, user: User) {
     try {
       const { images = [], ...productDetails } = createProductDto;
+      const normalizedSectorIds = this.normalizeSectorIds(
+        productDetails.allowedSectorIds,
+      );
+      const allowAllSectors =
+        normalizedSectorIds.length > 0
+          ? false
+          : (productDetails.allowAllSectors ?? true);
+
+      if (!allowAllSectors) {
+        await this.validateSectorIds(normalizedSectorIds);
+      }
 
       const product = this.productRepository.create({
         ...productDetails,
+        allowAllSectors,
+        allowedSectorIds: allowAllSectors ? [] : normalizedSectorIds,
         images: images.map((image) =>
           this.productImageRepository.create({ url: image }),
         ),
@@ -60,7 +79,7 @@ export class ProductsService {
   async findAll(
     paginationDto: PaginationDto,
     includeInactive = false,
-    visibleSlugs?: string[],
+    visibleSectorId?: string | null,
   ) {
     const {
       limit = 10,
@@ -79,9 +98,6 @@ export class ProductsService {
         : undefined
       : true;
 
-    const normalizedVisibleSlugs = (visibleSlugs || [])
-      .map((slug) => slug?.trim().toLowerCase())
-      .filter((slug) => Boolean(slug));
     const normalizedQuery = query?.trim();
 
     const baseQuery = this.productRepository.createQueryBuilder('product');
@@ -100,14 +116,8 @@ export class ProductsService {
       });
     }
 
-    if (visibleSlugs) {
-      if (normalizedVisibleSlugs.length > 0) {
-        baseQuery.andWhere('LOWER(product.slug) IN (:...visibleSlugs)', {
-          visibleSlugs: normalizedVisibleSlugs,
-        });
-      } else {
-        baseQuery.andWhere('1 = 0');
-      }
+    if (visibleSectorId !== undefined) {
+      this.applySectorVisibilityFilter(baseQuery, visibleSectorId);
     }
 
     if (normalizedQuery) {
@@ -151,17 +161,10 @@ export class ProductsService {
       return this.findAll(paginationDto, true);
     }
 
-    const authUser = await this.userRepository.findOne({
-      where: { id: user.id },
-      relations: { sector: true },
-    });
-    const sector = authUser?.sector;
-    const allowedSlugs =
-      sector && !sector.allowAllProducts
-        ? sector.allowedProductSlugs || []
-        : undefined;
+    const authUser = await this.userRepository.findOneBy({ id: user.id });
+    const sectorId = authUser?.sectorId || null;
 
-    return this.findAll(paginationDto, false, allowedSlugs);
+    return this.findAll(paginationDto, false, sectorId);
   }
 
   async findOne(term: string, onlyActive = false) {
@@ -213,19 +216,11 @@ export class ProductsService {
       return product;
     }
 
-    const authUser = await this.userRepository.findOne({
-      where: { id: user.id },
-      relations: { sector: true },
-    });
-    const sector = authUser?.sector;
+    const authUser = await this.userRepository.findOneBy({ id: user.id });
+    const sectorId = authUser?.sectorId || null;
 
-    if (sector && !sector.allowAllProducts) {
-      const allowed = new Set(
-        (sector.allowedProductSlugs || []).map((slug) => slug.toLowerCase()),
-      );
-      if (!allowed.has(product.slug?.toLowerCase())) {
-        throw new NotFoundException(`Product with ${term} not found`);
-      }
+    if (!this.canAccessProductBySector(product, sectorId)) {
+      throw new NotFoundException(`Product with ${term} not found`);
     }
 
     return product;
@@ -238,6 +233,27 @@ export class ProductsService {
 
     if (!product)
       throw new NotFoundException(`Product with id: ${id} not found`);
+
+    const hasSectorVisibilityPatch =
+      Object.prototype.hasOwnProperty.call(updateProductDto, 'allowAllSectors') ||
+      Object.prototype.hasOwnProperty.call(updateProductDto, 'allowedSectorIds');
+
+    if (hasSectorVisibilityPatch) {
+      const normalizedSectorIds = this.normalizeSectorIds(
+        updateProductDto.allowedSectorIds ?? product.allowedSectorIds,
+      );
+      const allowAllSectors =
+        normalizedSectorIds.length > 0
+          ? false
+          : (updateProductDto.allowAllSectors ?? product.allowAllSectors);
+
+      if (!allowAllSectors) {
+        await this.validateSectorIds(normalizedSectorIds);
+      }
+
+      product.allowAllSectors = allowAllSectors;
+      product.allowedSectorIds = allowAllSectors ? [] : normalizedSectorIds;
+    }
 
     // Create query runner
     const queryRunner = this.dataSource.createQueryRunner();
@@ -292,5 +308,62 @@ export class ProductsService {
     } catch (error) {
       this.handleDBExceptions(error);
     }
+  }
+
+  private normalizeSectorIds(sectorIds?: string[]) {
+    if (!Array.isArray(sectorIds)) return [];
+    return Array.from(
+      new Set(
+        sectorIds
+          .map((sectorId) => sectorId?.trim())
+          .filter((sectorId): sectorId is string => Boolean(sectorId)),
+      ),
+    );
+  }
+
+  private async validateSectorIds(sectorIds: string[]) {
+    if (!sectorIds.length) return;
+    const uniqueSectorIds = Array.from(new Set(sectorIds));
+    const sectors = await this.sectorRepository.find({
+      where: { id: In(uniqueSectorIds) },
+      select: { id: true },
+    });
+    const foundSectorIds = new Set((sectors || []).map((sector) => sector.id));
+    const missingSectorIds = uniqueSectorIds.filter(
+      (sectorId) => !foundSectorIds.has(sectorId),
+    );
+    if (missingSectorIds.length > 0) {
+      throw new BadRequestException(
+        `Sectores no encontrados: ${missingSectorIds.join(', ')}`,
+      );
+    }
+  }
+
+  private applySectorVisibilityFilter(
+    queryBuilder: SelectQueryBuilder<Product>,
+    sectorId?: string | null,
+  ) {
+    if (!sectorId) {
+      queryBuilder.andWhere('product."allowAllSectors" = true');
+      return;
+    }
+
+    queryBuilder.andWhere(
+      new Brackets((qb) => {
+        qb.where('product."allowAllSectors" = true').orWhere(
+          ':sectorId = ANY(product."allowedSectorIds")',
+          { sectorId },
+        );
+      }),
+    );
+  }
+
+  private canAccessProductBySector(
+    product: { allowAllSectors?: boolean; allowedSectorIds?: string[] },
+    sectorId?: string | null,
+  ) {
+    if (product.allowAllSectors) return true;
+    if (!sectorId) return false;
+    return (product.allowedSectorIds || []).includes(sectorId);
   }
 }

@@ -60,9 +60,7 @@ export class OrdersService {
       })) || user;
     const isSuperUser = this.isSuperOrderingUser(orderingUser);
     const sector = orderingUser?.sector || null;
-    const restrictedSlugs = !isSuperUser && sector && !sector.allowAllProducts
-      ? new Set((sector.allowedProductSlugs || []).map((slug) => slug.toLowerCase()))
-      : null;
+    const sectorId = sector?.id || null;
     const maxItemsLimit =
       typeof sector?.maxItems === 'number' && sector.maxItems > 0
         ? Math.floor(sector.maxItems)
@@ -89,12 +87,6 @@ export class OrdersService {
     ) {
       throw new BadRequestException(
         `Solo se permiten ${maxItemsLimit} productos por pedido`,
-      );
-    }
-
-    if (!isSuperUser && restrictedSlugs && restrictedSlugs.size === 0) {
-      throw new BadRequestException(
-        'Tu sector no tiene productos habilitados para realizar pedidos',
       );
     }
 
@@ -155,8 +147,9 @@ export class OrdersService {
 
       if (
         !isSuperUser &&
-        restrictedSlugs &&
-        !restrictedSlugs.has(product.slug?.toLowerCase())
+        !product.allowAllSectors &&
+        (!sectorId ||
+          !(product.allowedSectorIds || []).includes(sectorId))
       ) {
         throw new BadRequestException(
           `El producto ${product.title} no esta habilitado para tu sector`,

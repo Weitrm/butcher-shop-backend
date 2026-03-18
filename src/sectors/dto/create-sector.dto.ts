@@ -1,6 +1,4 @@
 import {
-  ArrayUnique,
-  IsArray,
   IsBoolean,
   IsHexColor,
   IsInt,
@@ -42,14 +40,4 @@ export class CreateSectorDto {
   @IsInt()
   @Min(1)
   maxOrdersPerWeek?: number;
-
-  @IsOptional()
-  @IsBoolean()
-  allowAllProducts?: boolean;
-
-  @IsOptional()
-  @IsArray()
-  @ArrayUnique()
-  @IsString({ each: true })
-  allowedProductSlugs?: string[];
 }

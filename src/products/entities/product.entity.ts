@@ -95,6 +95,27 @@ export class Product {
     })
     allowBoxes: boolean;
 
+    @ApiProperty({
+        example: true,
+        description: 'Whether this product is visible to all sectors in the new sector-based visibility model',
+        default: true,
+    })
+    @Column('bool', {
+        default: true,
+    })
+    allowAllSectors: boolean;
+
+    @ApiProperty({
+        example: ['f88f9880-2f58-470f-90d2-0f7db24695c2'],
+        description: 'Explicit sector IDs that can see this product when allowAllSectors is false.',
+        required: false,
+    })
+    @Column('uuid', {
+        array: true,
+        default: [],
+    })
+    allowedSectorIds: string[];
+
     // images
     @ApiProperty()
     @OneToMany(
@@ -128,6 +149,7 @@ export class Product {
             .toLowerCase()
             .replaceAll(' ','_')
             .replaceAll("'",'')
+        this.allowedSectorIds = this.normalizeSectorIds(this.allowedSectorIds)
 
     }
 
@@ -137,7 +159,19 @@ export class Product {
             .toLowerCase()
             .replaceAll(' ','_')
             .replaceAll("'",'')
+        this.allowedSectorIds = this.normalizeSectorIds(this.allowedSectorIds)
     }
 
+    private normalizeSectorIds(sectorIds?: string[]) {
+        if (!Array.isArray(sectorIds)) return []
+
+        return Array.from(
+            new Set(
+                sectorIds
+                    .map((sectorId) => sectorId?.trim())
+                    .filter((sectorId) => Boolean(sectorId)),
+            ),
+        )
+    }
 
 }
