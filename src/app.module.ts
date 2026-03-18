@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { join } from 'path';
 
 import { ProductsModule } from './products/products.module';
 import { CommonModule } from './common/common.module';
@@ -32,6 +33,8 @@ const isProd = process.env.STAGE === 'prod';
       password: process.env.DB_PASSWORD,      
       autoLoadEntities: true,
       synchronize: !isProd,
+      migrations: [join(__dirname, 'migrations', '*{.ts,.js}')],
+      migrationsRun: isProd,
     }),
 
     ProductsModule,
