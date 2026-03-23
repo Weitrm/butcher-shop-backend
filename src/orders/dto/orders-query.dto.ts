@@ -15,6 +15,10 @@ const DATE_OR_ISO_PATTERN = /^\d{4}-\d{2}-\d{2}(?:T.*)?$/;
 
 export class OrdersQueryDto extends PaginationDto {
   @IsOptional()
+  @IsIn(['default', 'statusEmployeeAsc'])
+  sort?: 'default' | 'statusEmployeeAsc';
+
+  @IsOptional()
   @IsIn(['week', 'history', 'all'])
   scope?: string;
 

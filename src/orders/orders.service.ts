@@ -266,6 +266,7 @@ export class OrdersService {
     const {
       limit = 10,
       offset = 0,
+      sort = 'default',
       ...filters
     } = queryDto;
     const safeLimit = Math.max(1, limit);
@@ -277,12 +278,11 @@ export class OrdersService {
       .leftJoinAndSelect('user.sector', 'sector')
       .leftJoinAndSelect('order.items', 'item')
       .leftJoinAndSelect('item.product', 'product')
-      .orderBy('order.createdAt', 'DESC')
-      .distinct(true)
-      .take(safeLimit)
-      .skip(safeOffset);
+      .distinct(true);
 
     this.applyAdminOrderFilters(queryBuilder, filters);
+    this.applyAdminOrderSorting(queryBuilder, sort);
+    queryBuilder.take(safeLimit).skip(safeOffset);
 
     const [orders, totalOrders] = await queryBuilder.getManyAndCount();
 
@@ -1038,5 +1038,43 @@ export class OrdersService {
     if (parsedHasBoxes === false) {
       queryBuilder.andWhere(`"order"."id" NOT IN (${hasBoxOrderIdsSubquery})`);
     }
+  }
+
+  private applyAdminOrderSorting(
+    queryBuilder: SelectQueryBuilder<Order>,
+    sort: OrdersQueryDto['sort'],
+  ) {
+    if (sort !== 'statusEmployeeAsc') {
+      queryBuilder.orderBy('order.createdAt', 'DESC');
+      return;
+    }
+
+    const statusPriorityExpression = `
+      CASE
+        WHEN "order"."status" = :pendingStatus THEN 0
+        WHEN "order"."status" = :completedStatus THEN 1
+        ELSE 2
+      END
+    `;
+    const employeeNumberValueExpression = `
+      COALESCE(
+        NULLIF(
+          REGEXP_REPLACE(COALESCE("user"."employeeNumber", ''), '[^0-9]', '', 'g'),
+          ''
+        )::bigint,
+        9223372036854775807
+      )
+    `;
+
+    queryBuilder
+      .setParameters({
+        pendingStatus: OrderStatus.Pending,
+        completedStatus: OrderStatus.Completed,
+      })
+      .addSelect(statusPriorityExpression, 'sort_status_priority')
+      .addSelect(employeeNumberValueExpression, 'sort_employee_number')
+      .orderBy('sort_status_priority', 'ASC')
+      .addOrderBy('sort_employee_number', 'ASC')
+      .addOrderBy('order.createdAt', 'ASC');
   }
 }
