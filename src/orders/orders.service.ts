@@ -314,10 +314,14 @@ export class OrdersService {
     };
 
     for (const order of orders) {
+      if (order.status === OrderStatus.Cancelled) {
+        summary.cancelled += 1;
+        continue;
+      }
+
       summary.total += 1;
       if (order.status === OrderStatus.Pending) summary.pending += 1;
       if (order.status === OrderStatus.Completed) summary.completed += 1;
-      if (order.status === OrderStatus.Cancelled) summary.cancelled += 1;
     }
 
     return summary;
@@ -345,6 +349,10 @@ export class OrdersService {
     };
 
     for (const order of orders) {
+      if (order.status === OrderStatus.Cancelled) {
+        continue;
+      }
+
       summary.total += 1;
       summary.totalPrice += Number(order.totalPrice || 0);
       if (order.status === OrderStatus.Completed) summary.completed += 1;
