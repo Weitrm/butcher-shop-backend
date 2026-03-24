@@ -286,11 +286,13 @@ export class ProductsService {
       product.user = user;
 
       await queryRunner.manager.save(product);
-      await this.syncProductSectorVisibility(
-        id,
-        product.allowAllSectors ? [] : product.allowedSectorIds || [],
-        queryRunner.manager,
-      );
+      if (hasSectorVisibilityPatch) {
+        await this.syncProductSectorVisibility(
+          id,
+          product.allowAllSectors ? [] : product.allowedSectorIds || [],
+          queryRunner.manager,
+        );
+      }
 
       await queryRunner.commitTransaction();
       await queryRunner.release();

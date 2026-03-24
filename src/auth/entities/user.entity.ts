@@ -49,10 +49,6 @@ export class User {
     })
     isSuperUser: boolean;
 
-    @Column('text', {
-        array: true,
-        default: ['user']
-    })
     roles: string[];
 
     @Column('uuid', { nullable: true })

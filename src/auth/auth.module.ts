@@ -10,12 +10,13 @@ import { User } from './entities/user.entity';
 import { UserRole } from './entities/user-role.entity';
 import { UserWeeklyOrderException } from './entities/user-weekly-order-exception.entity';
 import { JwtStrategy } from './strategies/jwt.strategy';
+import { UserRoleResolverService } from './services/user-role-resolver.service';
 import { Sector } from '../sectors/entities';
 import { Order } from '../orders/entities';
 
 @Module({
   controllers: [AuthController],
-  providers: [AuthService, JwtStrategy ],
+  providers: [AuthService, JwtStrategy, UserRoleResolverService],
   imports: [
     ConfigModule,
 

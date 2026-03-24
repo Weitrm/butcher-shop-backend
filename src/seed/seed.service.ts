@@ -4,6 +4,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { ProductsService } from './../products/products.service';
 import { initialData } from './data/seed-data';
 import { User } from '../auth/entities/user.entity';
+import { UserRole } from '../auth/entities/user-role.entity';
 
 
 @Injectable()
@@ -13,7 +14,10 @@ export class SeedService {
     private readonly productsService: ProductsService,
 
     @InjectRepository( User )
-    private readonly userRepository: Repository<User>
+    private readonly userRepository: Repository<User>,
+
+    @InjectRepository( UserRole )
+    private readonly userRoleRepository: Repository<UserRole>,
   ) {}
 
 
@@ -42,14 +46,23 @@ export class SeedService {
   private async insertUsers() {
 
     const seedUsers = initialData.users;
-    
-    const users: User[] = [];
+    const users = seedUsers.map((seedUser) => this.userRepository.create(seedUser));
 
-    seedUsers.forEach( user => {
-      users.push( this.userRepository.create( user ) )
+    const dbUsers = await this.userRepository.save(users);
+    const userRoles = dbUsers.flatMap((savedUser, index) => {
+      const roles = Array.from(
+        new Set((seedUsers[index]?.roles || ['user']).filter(Boolean)),
+      );
+      return roles.map((role) =>
+        this.userRoleRepository.create({
+          userId: savedUser.id,
+          role,
+        }),
+      );
     });
-
-    const dbUsers = await this.userRepository.save( seedUsers )
+    if (userRoles.length > 0) {
+      await this.userRoleRepository.save(userRoles);
+    }
 
     return dbUsers[0];
   }

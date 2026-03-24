@@ -21,11 +21,9 @@ import {
 import { JwtPayload } from './interfaces/jwt-payload.interface';
 import { Sector } from '../sectors/entities';
 import { Order } from '../orders/entities';
-import { UserRole } from './entities/user-role.entity';
 import { UserWeeklyOrderException } from './entities/user-weekly-order-exception.entity';
+import { UserRoleResolverService } from './services/user-role-resolver.service';
 
-const LEGACY_SUPER_ROLE = 'super';
-const SUPER_USER_ROLE = 'super-user';
 const ADMIN_ROLE = 'admin';
 
 @Injectable()
@@ -37,9 +35,6 @@ export class AuthService {
     @InjectRepository(Sector)
     private readonly sectorRepository: Repository<Sector>,
 
-    @InjectRepository(UserRole)
-    private readonly userRoleRepository: Repository<UserRole>,
-
     @InjectRepository(Order)
     private readonly orderRepository: Repository<Order>,
 
@@ -48,11 +43,15 @@ export class AuthService {
 
     private readonly jwtService: JwtService,
     private readonly dataSource: DataSource,
+    private readonly userRoleResolverService: UserRoleResolverService,
   ) {}
 
   async create(createUserDto: CreateUserDto) {
     try {
       const { password, isSuperUser, sectorId, ...userData } = createUserDto;
+      const rolesForUser = this.userRoleResolverService.getRolesForSuperFlag(
+        Boolean(isSuperUser),
+      );
       const sector = sectorId
         ? await this.sectorRepository.findOneBy({ id: sectorId })
         : null;
@@ -64,19 +63,18 @@ export class AuthService {
       const user = this.userRepository.create({
         ...userData,
         isSuperUser: Boolean(isSuperUser),
-        roles: this.getRolesForSuperFlag(Boolean(isSuperUser)),
         sectorId: sector?.id || null,
         sector: sector || null,
         password: bcrypt.hashSync(password, 10),
       });
 
       await this.userRepository.save(user);
-      await this.syncUserRoles(user.id, user.roles || []);
+      await this.userRoleResolverService.replaceUserRoles(user.id, rolesForUser);
       delete user.password;
 
       return {
         user: await this.enrichUserWithWeeklyState(
-          this.normalizeSuperUser(await this.mergeRolesFromTable(user)),
+          await this.userRoleResolverService.resolveAndSyncUserRoles(user),
         ),
         token: this.getJwtToken({ id: user.id }),
       };
@@ -98,7 +96,6 @@ export class AuthService {
         fullName: true,
         isActive: true,
         isSuperUser: true,
-        roles: true,
         sectorId: true,
       },
       relations: {
@@ -116,8 +113,7 @@ export class AuthService {
     if (!bcrypt.compareSync(password, user.password))
       throw new UnauthorizedException('Credentials are not valid (password)');
 
-    await this.mergeRolesFromTable(user);
-    this.normalizeSuperUser(user);
+    await this.userRoleResolverService.resolveAndSyncUserRoles(user);
     delete user.password;
 
     return {
@@ -127,8 +123,7 @@ export class AuthService {
   }
 
   async checkAuthStatus(user: User) {
-    await this.mergeRolesFromTable(user);
-    this.normalizeSuperUser(user);
+    await this.userRoleResolverService.resolveAndSyncUserRoles(user);
 
     return {
       user: await this.enrichUserWithWeeklyState(user),
@@ -155,10 +150,8 @@ export class AuthService {
     }
 
     const users = await usersQuery.getMany();
-    const usersWithMergedRoles = await this.mergeRolesForUsers(users);
-    const normalizedUsers = usersWithMergedRoles.map((listedUser) =>
-      this.normalizeSuperUser(listedUser),
-    );
+    const normalizedUsers =
+      await this.userRoleResolverService.resolveUsersWithTableRoles(users);
     return this.enrichUsersWithWeeklyState(normalizedUsers);
   }
 
@@ -167,7 +160,7 @@ export class AuthService {
     if (!user) {
       throw new NotFoundException(`Usuario con id ${userId} no encontrado`);
     }
-    await this.mergeRolesFromTable(user);
+    await this.userRoleResolverService.resolveAndSyncUserRoles(user);
 
     if (user.roles?.includes('admin')) {
       if (user.id === actor.id) {
@@ -189,7 +182,7 @@ export class AuthService {
     await this.userRepository.save(user);
 
     return this.enrichUserWithWeeklyState(
-      this.normalizeSuperUser(await this.mergeRolesFromTable(user)),
+      await this.userRoleResolverService.resolveAndSyncUserRoles(user),
     );
   }
 
@@ -198,15 +191,18 @@ export class AuthService {
     if (!user) {
       throw new NotFoundException(`Usuario con id ${userId} no encontrado`);
     }
-    await this.mergeRolesFromTable(user);
+    await this.userRoleResolverService.resolveAndSyncUserRoles(user);
 
     user.isSuperUser = isSuperUser;
-    user.roles = this.getRolesForSuperFlag(isSuperUser, user.roles || []);
+    user.roles = this.userRoleResolverService.getRolesForSuperFlag(
+      isSuperUser,
+      user.roles || [],
+    );
     await this.userRepository.save(user);
-    await this.syncUserRoles(user.id, user.roles || []);
+    await this.userRoleResolverService.replaceUserRoles(user.id, user.roles || []);
 
     return this.enrichUserWithWeeklyState(
-      this.normalizeSuperUser(await this.mergeRolesFromTable(user)),
+      await this.userRoleResolverService.resolveAndSyncUserRoles(user),
     );
   }
 
@@ -215,11 +211,11 @@ export class AuthService {
     if (!user) {
       throw new NotFoundException(`Usuario con id ${userId} no encontrado`);
     }
-    await this.mergeRolesFromTable(user);
+    await this.userRoleResolverService.resolveAndSyncUserRoles(user);
 
     const isCurrentlyAdmin = (user.roles || []).includes(ADMIN_ROLE);
     if (isAdmin === isCurrentlyAdmin) {
-      return this.normalizeSuperUser(await this.mergeRolesFromTable(user));
+      return this.userRoleResolverService.resolveAndSyncUserRoles(user);
     }
 
     if (!isAdmin && isCurrentlyAdmin) {
@@ -239,11 +235,15 @@ export class AuthService {
       }
     }
 
-    user.roles = this.toggleRole(user.roles || [], ADMIN_ROLE, isAdmin);
+    user.roles = this.userRoleResolverService.toggleRole(
+      user.roles || [],
+      ADMIN_ROLE,
+      isAdmin,
+    );
     await this.userRepository.save(user);
-    await this.syncUserRoles(user.id, user.roles || []);
+    await this.userRoleResolverService.replaceUserRoles(user.id, user.roles || []);
     return this.enrichUserWithWeeklyState(
-      this.normalizeSuperUser(await this.mergeRolesFromTable(user)),
+      await this.userRoleResolverService.resolveAndSyncUserRoles(user),
     );
   }
 
@@ -258,7 +258,7 @@ export class AuthService {
       user.sector = null;
       await this.userRepository.save(user);
       return this.enrichUserWithWeeklyState(
-        this.normalizeSuperUser(await this.mergeRolesFromTable(user)),
+        await this.userRoleResolverService.resolveAndSyncUserRoles(user),
       );
     }
 
@@ -271,7 +271,7 @@ export class AuthService {
     user.sector = sector;
     await this.userRepository.save(user);
     return this.enrichUserWithWeeklyState(
-      this.normalizeSuperUser(await this.mergeRolesFromTable(user)),
+      await this.userRoleResolverService.resolveAndSyncUserRoles(user),
     );
   }
 
@@ -285,8 +285,7 @@ export class AuthService {
       throw new NotFoundException(`Usuario con id ${userId} no encontrado`);
     }
 
-    await this.mergeRolesFromTable(user);
-    this.normalizeSuperUser(user);
+    await this.userRoleResolverService.resolveAndSyncUserRoles(user);
     if (user.isSuperUser) {
       throw new BadRequestException(
         'Los super usuarios no necesitan pedidos extra semanales',
@@ -324,7 +323,7 @@ export class AuthService {
 
     delete user.password;
     return this.enrichUserWithWeeklyState(
-      this.normalizeSuperUser(await this.mergeRolesFromTable(user)),
+      await this.userRoleResolverService.resolveAndSyncUserRoles(user),
     );
   }
 
@@ -333,7 +332,7 @@ export class AuthService {
     if (!user) {
       throw new NotFoundException(`Usuario con id ${userId} no encontrado`);
     }
-    await this.mergeRolesFromTable(user);
+    await this.userRoleResolverService.resolveAndSyncUserRoles(user);
 
     if (user.roles?.includes('admin')) {
       if (user.id === actor.id) {
@@ -490,23 +489,6 @@ export class AuthService {
     throw new InternalServerErrorException('Please check server logs');
   }
 
-  private getRolesForSuperFlag(
-    isSuperUser: boolean,
-    currentRoles: string[] = ['user'],
-  ) {
-    const normalized = Array.from(new Set((currentRoles || []).filter(Boolean)));
-    const withoutLegacy = normalized.filter(
-      (role) => role !== LEGACY_SUPER_ROLE && role !== SUPER_USER_ROLE,
-    );
-    return isSuperUser ? [...withoutLegacy, SUPER_USER_ROLE] : withoutLegacy;
-  }
-
-  private toggleRole(currentRoles: string[], role: string, enabled: boolean) {
-    const normalized = Array.from(new Set((currentRoles || []).filter(Boolean)));
-    const withoutRole = normalized.filter((candidate) => candidate !== role);
-    return enabled ? [...withoutRole, role] : withoutRole;
-  }
-
   private getStartOfWeek(reference = new Date()) {
     const startOfWeek = new Date(reference);
     startOfWeek.setHours(0, 0, 0, 0);
@@ -520,69 +502,5 @@ export class AuthService {
     const month = String(date.getMonth() + 1).padStart(2, '0');
     const day = String(date.getDate()).padStart(2, '0');
     return `${year}-${month}-${day}`;
-  }
-
-  private async syncUserRoles(userId: string, roles: string[]) {
-    const uniqueRoles = Array.from(
-      new Set((roles || []).map((role) => role?.trim()).filter(Boolean)),
-    );
-    await this.userRoleRepository.delete({ userId });
-    if (!uniqueRoles.length) return;
-
-    const records = uniqueRoles.map((role) =>
-      this.userRoleRepository.create({ userId, role }),
-    );
-    await this.userRoleRepository.save(records);
-  }
-
-  private async mergeRolesFromTable(user: User) {
-    if (!user?.id) return user;
-
-    const rolesFromTable = await this.userRoleRepository.find({
-      where: { userId: user.id },
-      select: { role: true },
-    });
-    if (!rolesFromTable.length) return user;
-
-    user.roles = Array.from(
-      new Set([...(user.roles || []), ...rolesFromTable.map((entry) => entry.role)]),
-    );
-    return user;
-  }
-
-  private async mergeRolesForUsers(users: User[]) {
-    if (!users.length) return users;
-    const userIds = users.map((user) => user.id).filter(Boolean);
-    if (!userIds.length) return users;
-
-    const roleRows = await this.userRoleRepository
-      .createQueryBuilder('userRole')
-      .select(['userRole.userId AS "userId"', 'userRole.role AS "role"'])
-      .where('userRole.userId IN (:...userIds)', { userIds })
-      .getRawMany<{ userId: string; role: string }>();
-
-    const roleMap = new Map<string, string[]>();
-    for (const row of roleRows) {
-      if (!row?.userId || !row?.role) continue;
-      const current = roleMap.get(row.userId) || [];
-      current.push(row.role);
-      roleMap.set(row.userId, current);
-    }
-
-    return users.map((user) => {
-      const tableRoles = roleMap.get(user.id) || [];
-      user.roles = Array.from(new Set([...(user.roles || []), ...tableRoles]));
-      return user;
-    });
-  }
-
-  private normalizeSuperUser(user: User) {
-    if (!user) return user;
-    const roles = user.roles || [];
-    user.isSuperUser =
-      user.isSuperUser === true ||
-      roles.includes(SUPER_USER_ROLE) ||
-      roles.includes(LEGACY_SUPER_ROLE);
-    return user;
   }
 }
