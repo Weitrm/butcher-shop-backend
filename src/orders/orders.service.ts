@@ -27,6 +27,9 @@ import { Product } from '../products/entities';
 import { User } from '../auth/entities/user.entity';
 import { UserWeeklyOrderException } from '../auth/entities/user-weekly-order-exception.entity';
 import { PaginationDto } from '../common/dtos/pagination.dto';
+import { OrderRulesService } from './domain/services/order-rules.service';
+import { OrderDateService } from './domain/services/order-date.service';
+import { OrderResponseMapper } from './application/mappers/order-response.mapper';
 
 @Injectable()
 export class OrdersService {
@@ -49,6 +52,9 @@ export class OrdersService {
     private readonly weeklyOrderExceptionRepository: Repository<UserWeeklyOrderException>,
 
     private readonly dataSource: DataSource,
+    private readonly orderRulesService: OrderRulesService,
+    private readonly orderDateService: OrderDateService,
+    private readonly orderResponseMapper: OrderResponseMapper,
   ) {}
 
   async create(createOrderDto: CreateOrderDto, user: User) {
@@ -58,7 +64,7 @@ export class OrdersService {
         where: { id: user.id },
         relations: { sector: true },
       })) || user;
-    const isSuperUser = this.isSuperOrderingUser(orderingUser);
+    const isSuperUser = this.orderRulesService.isSuperOrderingUser(orderingUser);
     const sector = orderingUser?.sector || null;
     const sectorId = sector?.id || null;
     const maxItemsLimit =
@@ -91,7 +97,7 @@ export class OrdersService {
     }
 
     if (!isSuperUser) {
-      const startOfWeek = this.getStartOfWeek();
+      const startOfWeek = this.orderDateService.getStartOfWeek();
       const [ordersThisWeek, extraOrdersThisWeek] = await Promise.all([
         this.orderRepository.count({
           where: {
@@ -101,7 +107,7 @@ export class OrdersService {
         }),
         this.getCurrentWeekExtraOrders(orderingUser.id, startOfWeek),
       ]);
-      const weeklyLimit = this.getWeeklyOrderLimit(orderingUser);
+      const weeklyLimit = this.orderRulesService.getWeeklyOrderLimit(orderingUser);
 
       if (
         typeof weeklyLimit === 'number' &&
@@ -202,7 +208,7 @@ export class OrdersService {
       typeof sector?.preparationWeekday === 'number'
         ? sector.preparationWeekday
         : null;
-    const preparationDate = this.resolvePreparationDate(
+    const preparationDate = this.orderDateService.resolvePreparationDate(
       new Date(),
       preparationWeekday,
     );
@@ -227,7 +233,7 @@ export class OrdersService {
         where: { id: savedOrder.id, user: { id: orderingUser.id } },
       });
 
-      return this.mapOrderResponse(fullOrder);
+      return this.orderResponseMapper.mapOrderResponse(fullOrder);
     } catch (error) {
       this.handleDBExceptions(error);
     }
@@ -237,7 +243,7 @@ export class OrdersService {
     const { limit = 10, offset = 0, fromDate, toDate } = queryDto;
     const safeLimit = Math.max(1, limit);
     const safeOffset = Math.max(0, offset);
-    const { from, to } = this.buildDateRange(fromDate, toDate);
+    const { from, to } = this.orderDateService.buildDateRange(fromDate, toDate);
     const where: FindOptionsWhere<Order> = { user: { id: user.id } };
 
     if (from && to) {
@@ -258,7 +264,9 @@ export class OrdersService {
     return {
       count: totalOrders,
       pages: Math.ceil(totalOrders / safeLimit),
-      orders: orders.map((order) => this.mapOrderResponse(order)),
+      orders: orders.map((order) =>
+        this.orderResponseMapper.mapOrderResponse(order),
+      ),
     };
   }
 
@@ -289,7 +297,9 @@ export class OrdersService {
     return {
       count: totalOrders,
       pages: Math.ceil(totalOrders / safeLimit),
-      orders: orders.map((order) => this.mapOrderResponse(order, true)),
+      orders: orders.map((order) =>
+        this.orderResponseMapper.mapOrderResponse(order, true),
+      ),
     };
   }
 
@@ -394,7 +404,7 @@ export class OrdersService {
       if (order.status === nextStatus) {
         await queryRunner.rollbackTransaction();
         await queryRunner.release();
-        return this.mapOrderResponse(order, true);
+        return this.orderResponseMapper.mapOrderResponse(order, true);
       }
 
       if (
@@ -457,7 +467,7 @@ export class OrdersService {
       await queryRunner.commitTransaction();
       await queryRunner.release();
 
-      return this.mapOrderResponse(updatedOrder, true);
+      return this.orderResponseMapper.mapOrderResponse(updatedOrder, true);
     } catch (error) {
       await queryRunner.rollbackTransaction();
       await queryRunner.release();
@@ -484,7 +494,7 @@ export class OrdersService {
     const startOfDay = new Date(now);
     startOfDay.setHours(0, 0, 0, 0);
 
-    const startOfWeek = this.getStartOfWeek();
+    const startOfWeek = this.orderDateService.getStartOfWeek();
 
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
     const startOfLastSevenDays = new Date(now);
@@ -645,8 +655,8 @@ export class OrdersService {
         row.bucket instanceof Date ? row.bucket : new Date(row.bucket);
       const bucketKey =
         activityUnit === 'day'
-          ? this.formatDateKey(bucketValue)
-          : this.formatMonthKey(bucketValue);
+          ? this.orderDateService.formatDateKey(bucketValue)
+          : this.orderDateService.formatMonthKey(bucketValue);
       activityMap.set(bucketKey, {
         totalKg: Number(row.totalKg || 0),
         totalOrders: Number(row.totalOrders || 0),
@@ -658,8 +668,8 @@ export class OrdersService {
         row.bucket instanceof Date ? row.bucket : new Date(row.bucket);
       const bucketKey =
         activityUnit === 'day'
-          ? this.formatDateKey(bucketValue)
-          : this.formatMonthKey(bucketValue);
+          ? this.orderDateService.formatDateKey(bucketValue)
+          : this.orderDateService.formatMonthKey(bucketValue);
       const products = activityProductsMap.get(bucketKey) || [];
 
       products.push({
@@ -683,8 +693,8 @@ export class OrdersService {
 
       const bucketKey =
         activityUnit === 'day'
-          ? this.formatDateKey(bucketDate)
-          : this.formatMonthKey(bucketDate);
+          ? this.orderDateService.formatDateKey(bucketDate)
+          : this.orderDateService.formatMonthKey(bucketDate);
       const bucketStats = activityMap.get(bucketKey) || {
         totalKg: 0,
         totalOrders: 0,
@@ -744,49 +754,6 @@ export class OrdersService {
     };
   }
 
-  private mapOrderResponse(order: Order | null, includeUser = false) {
-    if (!order) return null;
-
-    const { items = [], user, ...rest } = order;
-    const mappedUser = includeUser && user
-      ? {
-          id: user.id,
-          fullName: user.fullName,
-          employeeNumber: user.employeeNumber,
-          nationalId: user.nationalId,
-          isSuperUser: user.isSuperUser,
-          sectorId: user.sectorId || null,
-          sector: user.sector
-            ? {
-                id: user.sector.id,
-                title: user.sector.title,
-                color: user.sector.color,
-                preparationWeekday: user.sector.preparationWeekday,
-              }
-            : null,
-        }
-      : undefined;
-
-    return {
-      ...rest,
-      ...(includeUser ? { user: mappedUser } : {}),
-      items: items.map((item) => {
-        const { product, ...itemRest } = item;
-        const { images = [], user: _user, ...productRest } = product || {};
-
-        return {
-          ...itemRest,
-          product: product
-            ? {
-                ...productRest,
-                images: images.map((img) => img.url),
-              }
-            : null,
-        };
-      }),
-    };
-  }
-
   private handleDBExceptions(error: any) {
     this.logger.error(error);
     throw new InternalServerErrorException(
@@ -794,31 +761,8 @@ export class OrdersService {
     );
   }
 
-  private isSuperOrderingUser(user: User) {
-    return (
-      user?.isSuperUser === true ||
-      user?.roles?.includes('super-user') ||
-      user?.roles?.includes('super')
-    );
-  }
-
-  private getWeeklyOrderLimit(user: User) {
-    if (!user) return 1;
-
-    if (!user.sector) {
-      return 1;
-    }
-
-    const parsed = Number(user.sector.maxOrdersPerWeek);
-    if (!Number.isFinite(parsed) || parsed < 1) {
-      return null;
-    }
-
-    return Math.floor(parsed);
-  }
-
   private async getCurrentWeekExtraOrders(userId: string, startOfWeek: Date) {
-    const weekStartDate = this.formatDateKey(startOfWeek);
+    const weekStartDate = this.orderDateService.formatDateKey(startOfWeek);
     const result = await this.weeklyOrderExceptionRepository
       .createQueryBuilder('weeklyException')
       .select('COALESCE(SUM(weeklyException.extraOrders), 0)', 'total')
@@ -831,115 +775,6 @@ export class OrdersService {
     return Number(result?.total || 0);
   }
 
-  private getStartOfWeek(reference = new Date()) {
-    const startOfWeek = new Date(reference);
-    startOfWeek.setHours(0, 0, 0, 0);
-    const dayOfWeek = startOfWeek.getDay();
-    startOfWeek.setDate(startOfWeek.getDate() - dayOfWeek);
-    return startOfWeek;
-  }
-
-  private resolvePreparationDate(
-    reference: Date,
-    preparationWeekday: number | null,
-  ): string | null {
-    if (typeof preparationWeekday !== 'number') return null;
-    if (preparationWeekday === -1) {
-      return this.formatDateKey(reference);
-    }
-    if (preparationWeekday < 0 || preparationWeekday > 6) return null;
-    const base = this.getStartOfWeek(reference);
-    const preparation = new Date(base);
-    preparation.setDate(base.getDate() + preparationWeekday);
-    return this.formatDateKey(preparation);
-  }
-
-  private buildDateRange(fromDate?: string, toDate?: string) {
-    const from = fromDate ? this.parseDateOnly(fromDate, false) : undefined;
-    const to = toDate ? this.parseDateOnly(toDate, true) : undefined;
-
-    if (from && to && from.getTime() > to.getTime()) {
-      throw new BadRequestException(
-        'La fecha inicial no puede ser mayor que la fecha final',
-      );
-    }
-
-    return { from, to };
-  }
-
-  private parseDateOnly(value: string, endOfDay: boolean) {
-    const isoDateMatch = value?.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-    if (!isoDateMatch) {
-      const parsedDate = new Date(value);
-      if (Number.isNaN(parsedDate.getTime())) {
-        throw new BadRequestException(
-          'Formato de fecha invalido. Usa YYYY-MM-DD',
-        );
-      }
-
-      if (endOfDay) {
-        parsedDate.setUTCHours(23, 59, 59, 999);
-      } else {
-        parsedDate.setUTCHours(0, 0, 0, 0);
-      }
-
-      return parsedDate;
-    }
-
-    const [yearRaw, monthRaw, dayRaw] = value.split('-');
-    const year = Number(yearRaw);
-    const month = Number(monthRaw);
-    const day = Number(dayRaw);
-
-    if (!year || !month || !day) {
-      throw new BadRequestException(
-        'Formato de fecha invalido. Usa YYYY-MM-DD',
-      );
-    }
-
-    const date = new Date(
-      Date.UTC(
-        year,
-        month - 1,
-        day,
-        endOfDay ? 23 : 0,
-        endOfDay ? 59 : 0,
-        endOfDay ? 59 : 0,
-        endOfDay ? 999 : 0,
-      ),
-    );
-
-    if (
-      date.getUTCFullYear() !== year ||
-      date.getUTCMonth() !== month - 1 ||
-      date.getUTCDate() !== day
-    ) {
-      throw new BadRequestException(
-        'Formato de fecha invalido. Usa YYYY-MM-DD',
-      );
-    }
-
-    return date;
-  }
-
-  private formatDateKey(date: Date) {
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    const day = String(date.getDate()).padStart(2, '0');
-    return `${year}-${month}-${day}`;
-  }
-
-  private formatMonthKey(date: Date) {
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    return `${year}-${month}`;
-  }
-
-  private parseOptionalBoolean(value?: string) {
-    if (value === 'true') return true;
-    if (value === 'false') return false;
-    return undefined;
-  }
 
   private applyAdminOrderFilters(
     queryBuilder: SelectQueryBuilder<Order>,
@@ -956,11 +791,11 @@ export class OrdersService {
       status,
       hasBoxes,
     } = queryDto;
-    const { from, to } = this.buildDateRange(fromDate, toDate);
-    const parsedHasBoxes = this.parseOptionalBoolean(hasBoxes);
+    const { from, to } = this.orderDateService.buildDateRange(fromDate, toDate);
+    const parsedHasBoxes = this.orderRulesService.parseOptionalBoolean(hasBoxes);
 
     if (scope === 'week' || scope === 'history') {
-      const startOfWeek = this.getStartOfWeek();
+      const startOfWeek = this.orderDateService.getStartOfWeek();
       if (scope === 'week') {
         queryBuilder.andWhere('order.createdAt >= :startOfWeek', {
           startOfWeek,

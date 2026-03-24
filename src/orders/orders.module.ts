@@ -8,6 +8,9 @@ import { Product } from '../products/entities';
 import { AuthModule } from '../auth/auth.module';
 import { User } from '../auth/entities/user.entity';
 import { UserWeeklyOrderException } from '../auth/entities/user-weekly-order-exception.entity';
+import { OrderRulesService } from './domain/services/order-rules.service';
+import { OrderDateService } from './domain/services/order-date.service';
+import { OrderResponseMapper } from './application/mappers/order-response.mapper';
 
 @Module({
   imports: [
@@ -15,6 +18,6 @@ import { UserWeeklyOrderException } from '../auth/entities/user-weekly-order-exc
     AuthModule,
   ],
   controllers: [OrdersController],
-  providers: [OrdersService],
+  providers: [OrdersService, OrderRulesService, OrderDateService, OrderResponseMapper],
 })
 export class OrdersModule {}
