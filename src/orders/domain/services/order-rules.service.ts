@@ -5,11 +5,7 @@ import { User } from '../../../auth/entities/user.entity';
 @Injectable()
 export class OrderRulesService {
   isSuperOrderingUser(user: User | null | undefined) {
-    return (
-      user?.isSuperUser === true ||
-      user?.roles?.includes('super-user') ||
-      user?.roles?.includes('super')
-    );
+    return user?.isSuperUser === true || user?.roles?.includes('super-user');
   }
 
   getWeeklyOrderLimit(user: User | null | undefined) {

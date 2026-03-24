@@ -40,7 +40,7 @@ export const initialData: SeedData = {
             nationalId: '87654321',
             fullName: 'Test Two',
             password: bcrypt.hashSync( '87654321', 10 ),
-            roles: ['user','super']
+            roles: ['user','super-user']
         }
     ],
 
