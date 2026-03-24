@@ -368,11 +368,7 @@ export class ProductsService {
 
     queryBuilder.andWhere(
       new Brackets((qb) => {
-        qb.where('product."allowAllSectors" = true')
-          .orWhere(':sectorId = ANY(product."allowedSectorIds")', {
-            sectorId,
-          })
-          .orWhere(
+        qb.where('product."allowAllSectors" = true').orWhere(
             `EXISTS (
               SELECT 1
               FROM "product_sector_visibility" "psv"
@@ -391,7 +387,6 @@ export class ProductsService {
   ) {
     if (product.allowAllSectors) return true;
     if (!sectorId) return false;
-    if ((product.allowedSectorIds || []).includes(sectorId)) return true;
     if (!product.id) return false;
 
     const visibilityCount = await this.productSectorVisibilityRepository.count({
@@ -442,13 +437,9 @@ export class ProductsService {
     }
 
     return products.map((product) => {
-      const mergedSectorIds = Array.from(
-        new Set([
-          ...(product.allowedSectorIds || []),
-          ...(visibilityMap.get(product.id) || []),
-        ]),
+      product.allowedSectorIds = Array.from(
+        new Set(visibilityMap.get(product.id) || []),
       );
-      product.allowedSectorIds = mergedSectorIds;
       return product;
     });
   }

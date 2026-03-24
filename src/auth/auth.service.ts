@@ -145,9 +145,7 @@ export class AuthService {
       .orderBy('user.fullName', 'ASC');
 
     if (queryDto?.role) {
-      usersQuery.andWhere('(:role = ANY(user.roles) OR userRole.role = :role)', {
-        role: queryDto.role,
-      });
+      usersQuery.andWhere('userRole.role = :role', { role: queryDto.role });
     }
 
     if (queryDto?.sectorId) {
@@ -467,7 +465,7 @@ export class AuthService {
     return this.userRepository
       .createQueryBuilder('user')
       .leftJoin('user.userRoles', 'userRole')
-      .where('(:role = ANY(user.roles) OR userRole.role = :role)', {
+      .where('userRole.role = :role', {
         role: ADMIN_ROLE,
       })
       .andWhere('user.isActive = true')

@@ -138,11 +138,8 @@ export class CreateOrderUseCase {
         !isSuperUser &&
         !product.allowAllSectors &&
         (!sectorId ||
-          !(
-            (product.allowedSectorIds || []).includes(sectorId) ||
-            (product.productSectorVisibilities || []).some(
-              (visibility) => visibility.sectorId === sectorId,
-            )
+          !(product.productSectorVisibilities || []).some(
+            (visibility) => visibility.sectorId === sectorId,
           ))
       ) {
         throw new BadRequestException(
