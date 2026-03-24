@@ -12,6 +12,7 @@ import { Product } from '../../products/entities';
 import { Order } from '../../orders/entities/order.entity';
 import { Sector } from '../../sectors/entities';
 import { UserWeeklyOrderException } from './user-weekly-order-exception.entity';
+import { UserRole } from './user-role.entity';
 
 
 @Entity('users')
@@ -82,6 +83,12 @@ export class User {
         (weeklyOrderException) => weeklyOrderException.user,
     )
     weeklyOrderExceptions: UserWeeklyOrderException[];
+
+    @OneToMany(
+        () => UserRole,
+        (userRole) => userRole.user,
+    )
+    userRoles: UserRole[];
 
 
     @BeforeInsert()

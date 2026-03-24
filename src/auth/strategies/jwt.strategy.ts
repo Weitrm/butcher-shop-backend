@@ -5,6 +5,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { ExtractJwt, Strategy } from 'passport-jwt';
 import { Repository } from 'typeorm';
 import { User } from '../entities/user.entity';
+import { UserRole } from '../entities/user-role.entity';
 import { JwtPayload } from '../interfaces/jwt-payload.interface';
 
 @Injectable()
@@ -13,6 +14,8 @@ export class JwtStrategy extends PassportStrategy( Strategy ) {
     constructor(
         @InjectRepository( User )
         private readonly userRepository: Repository<User>,
+        @InjectRepository( UserRole )
+        private readonly userRoleRepository: Repository<UserRole>,
 
         configService: ConfigService
     ) {
@@ -32,6 +35,17 @@ export class JwtStrategy extends PassportStrategy( Strategy ) {
 
         if ( !user ) 
             throw new UnauthorizedException('Token not valid')
+
+        const rolesFromTable = await this.userRoleRepository.find({
+          where: { userId: user.id },
+          select: { role: true },
+        });
+        if (rolesFromTable.length > 0) {
+          const mergedRoles = Array.from(
+            new Set([...(user.roles || []), ...rolesFromTable.map((entry) => entry.role)]),
+          );
+          user.roles = mergedRoles;
+        }
 
         if ( !user.isActive )
             throw new UnauthorizedException('User inactive')

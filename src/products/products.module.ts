@@ -6,7 +6,7 @@ import { AuthModule } from './../auth/auth.module';
 import { ProductsController } from './products.controller';
 import { ProductsService } from './products.service';
 
-import { Product, ProductImage } from './entities';
+import { Product, ProductImage, ProductSectorVisibility } from './entities';
 import { User } from '../auth/entities/user.entity';
 import { Sector } from '../sectors/entities';
 
@@ -14,7 +14,7 @@ import { Sector } from '../sectors/entities';
   controllers: [ProductsController],
   providers: [ProductsService],
   imports: [
-    TypeOrmModule.forFeature([ Product, ProductImage, User, Sector ]),
+    TypeOrmModule.forFeature([ Product, ProductImage, ProductSectorVisibility, User, Sector ]),
     AuthModule,
   ],
   exports: [

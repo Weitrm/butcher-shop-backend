@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, Repository } from 'typeorm';
+import { Repository } from 'typeorm';
 
 import { Product } from '../../../../products/entities';
 import { ProductReadRepository } from '../../../domain/repositories/product-read.repository';
@@ -14,6 +14,13 @@ export class TypeOrmProductReadRepository implements ProductReadRepository {
 
   async findByIds(ids: string[]) {
     if (!ids.length) return [];
-    return this.productRepository.findBy({ id: In(ids) });
+    return this.productRepository
+      .createQueryBuilder('product')
+      .leftJoinAndSelect(
+        'product.productSectorVisibilities',
+        'productSectorVisibility',
+      )
+      .where('product.id IN (:...ids)', { ids })
+      .getMany();
   }
 }

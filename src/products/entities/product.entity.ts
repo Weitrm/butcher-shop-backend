@@ -3,6 +3,7 @@ import { ApiProperty } from '@nestjs/swagger';
 
 import { ProductImage } from './';
 import { User } from '../../auth/entities/user.entity';
+import { ProductSectorVisibility } from './product-sector-visibility.entity';
 
 @Entity({ name: 'products' })
 export class Product {
@@ -124,6 +125,12 @@ export class Product {
         { cascade: true, eager: true }
     )
     images?: ProductImage[];
+
+    @OneToMany(
+        () => ProductSectorVisibility,
+        (productSectorVisibility) => productSectorVisibility.product,
+    )
+    productSectorVisibilities?: ProductSectorVisibility[];
 
 
     @ManyToOne(

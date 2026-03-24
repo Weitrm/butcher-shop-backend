@@ -137,7 +137,13 @@ export class CreateOrderUseCase {
       if (
         !isSuperUser &&
         !product.allowAllSectors &&
-        (!sectorId || !(product.allowedSectorIds || []).includes(sectorId))
+        (!sectorId ||
+          !(
+            (product.allowedSectorIds || []).includes(sectorId) ||
+            (product.productSectorVisibilities || []).some(
+              (visibility) => visibility.sectorId === sectorId,
+            )
+          ))
       ) {
         throw new BadRequestException(
           `El producto ${product.title} no esta habilitado para tu sector`,

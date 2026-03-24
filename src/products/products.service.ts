@@ -9,6 +9,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import {
   Brackets,
   DataSource,
+  EntityManager,
   In,
   Repository,
   SelectQueryBuilder,
@@ -19,7 +20,7 @@ import { UpdateProductDto } from './dto/update-product.dto';
 import { PaginationDto } from 'src/common/dtos/pagination.dto';
 
 import { validate as isUUID } from 'uuid';
-import { ProductImage, Product } from './entities';
+import { ProductImage, Product, ProductSectorVisibility } from './entities';
 import { User } from '../auth/entities/user.entity';
 import { Sector } from '../sectors/entities';
 
@@ -33,6 +34,9 @@ export class ProductsService {
 
     @InjectRepository(ProductImage)
     private readonly productImageRepository: Repository<ProductImage>,
+
+    @InjectRepository(ProductSectorVisibility)
+    private readonly productSectorVisibilityRepository: Repository<ProductSectorVisibility>,
 
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
@@ -69,6 +73,10 @@ export class ProductsService {
       });
 
       await this.productRepository.save(product);
+      await this.syncProductSectorVisibility(
+        product.id,
+        allowAllSectors ? [] : normalizedSectorIds,
+      );
 
       return { ...product, images };
     } catch (error) {
@@ -141,11 +149,13 @@ export class ProductsService {
       .take(limit)
       .skip(offset)
       .getMany();
+    const productsWithMergedVisibility =
+      await this.mergeProductsWithSectorVisibility(products);
 
     return {
       count: totalProducts,
       pages: Math.ceil(totalProducts / limit),
-      products: products.map((product) => ({
+      products: productsWithMergedVisibility.map((product) => ({
         ...product,
         images: product.images.map((img) => img.url),
       })),
@@ -198,7 +208,10 @@ export class ProductsService {
   }
 
   async findOnePlain(term: string, onlyActive = false) {
-    const { images = [], ...rest } = await this.findOne(term, onlyActive);
+    const [product] = await this.mergeProductsWithSectorVisibility([
+      await this.findOne(term, onlyActive),
+    ]);
+    const { images = [], ...rest } = product;
     return {
       ...rest,
       images: images.map((image) => image.url),
@@ -219,7 +232,7 @@ export class ProductsService {
     const authUser = await this.userRepository.findOneBy({ id: user.id });
     const sectorId = authUser?.sectorId || null;
 
-    if (!this.canAccessProductBySector(product, sectorId)) {
+    if (!(await this.canAccessProductBySector(product, sectorId))) {
       throw new NotFoundException(`Product with ${term} not found`);
     }
 
@@ -273,6 +286,11 @@ export class ProductsService {
       product.user = user;
 
       await queryRunner.manager.save(product);
+      await this.syncProductSectorVisibility(
+        id,
+        product.allowAllSectors ? [] : product.allowedSectorIds || [],
+        queryRunner.manager,
+      );
 
       await queryRunner.commitTransaction();
       await queryRunner.release();
@@ -350,20 +368,88 @@ export class ProductsService {
 
     queryBuilder.andWhere(
       new Brackets((qb) => {
-        qb.where('product."allowAllSectors" = true').orWhere(
-          ':sectorId = ANY(product."allowedSectorIds")',
-          { sectorId },
-        );
+        qb.where('product."allowAllSectors" = true')
+          .orWhere(':sectorId = ANY(product."allowedSectorIds")', {
+            sectorId,
+          })
+          .orWhere(
+            `EXISTS (
+              SELECT 1
+              FROM "product_sector_visibility" "psv"
+              WHERE "psv"."productId" = "product"."id"
+                AND "psv"."sectorId" = :sectorId
+            )`,
+            { sectorId },
+          );
       }),
     );
   }
 
-  private canAccessProductBySector(
-    product: { allowAllSectors?: boolean; allowedSectorIds?: string[] },
+  private async canAccessProductBySector(
+    product: { id?: string; allowAllSectors?: boolean; allowedSectorIds?: string[] },
     sectorId?: string | null,
   ) {
     if (product.allowAllSectors) return true;
     if (!sectorId) return false;
-    return (product.allowedSectorIds || []).includes(sectorId);
+    if ((product.allowedSectorIds || []).includes(sectorId)) return true;
+    if (!product.id) return false;
+
+    const visibilityCount = await this.productSectorVisibilityRepository.count({
+      where: {
+        productId: product.id,
+        sectorId,
+      },
+    });
+    return visibilityCount > 0;
+  }
+
+  private async syncProductSectorVisibility(
+    productId: string,
+    sectorIds: string[],
+    manager?: EntityManager,
+  ) {
+    const repository = manager
+      ? manager.getRepository(ProductSectorVisibility)
+      : this.productSectorVisibilityRepository;
+    const normalizedSectorIds = this.normalizeSectorIds(sectorIds);
+
+    await repository.delete({ productId });
+    if (!normalizedSectorIds.length) return;
+
+    const records = normalizedSectorIds.map((sectorId) =>
+      repository.create({ productId, sectorId }),
+    );
+    await repository.save(records);
+  }
+
+  private async mergeProductsWithSectorVisibility(products: Product[]) {
+    if (!products.length) return products;
+    const productIds = Array.from(
+      new Set(products.map((product) => product.id).filter(Boolean)),
+    );
+    if (!productIds.length) return products;
+
+    const records = await this.productSectorVisibilityRepository.find({
+      where: { productId: In(productIds) },
+      select: { productId: true, sectorId: true },
+    });
+    const visibilityMap = new Map<string, string[]>();
+
+    for (const record of records) {
+      const current = visibilityMap.get(record.productId) || [];
+      current.push(record.sectorId);
+      visibilityMap.set(record.productId, current);
+    }
+
+    return products.map((product) => {
+      const mergedSectorIds = Array.from(
+        new Set([
+          ...(product.allowedSectorIds || []),
+          ...(visibilityMap.get(product.id) || []),
+        ]),
+      );
+      product.allowedSectorIds = mergedSectorIds;
+      return product;
+    });
   }
 }
