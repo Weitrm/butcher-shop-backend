@@ -77,6 +77,15 @@ export class CreateProductDto {
 
     @ApiProperty({
         required: false,
+        default: false,
+        description: 'When true, the product can only be ordered as boxes',
+    })
+    @IsBoolean()
+    @IsOptional()
+    onlyBoxes?: boolean;
+
+    @ApiProperty({
+        required: false,
         default: true,
         description: 'When true, the product is visible to all sectors in the new model',
     })

@@ -97,6 +97,16 @@ export class Product {
     allowBoxes: boolean;
 
     @ApiProperty({
+        example: false,
+        description: 'Whether this product can only be ordered as boxes',
+        default: false,
+    })
+    @Column('bool', {
+        default: false,
+    })
+    onlyBoxes: boolean;
+
+    @ApiProperty({
         example: true,
         description: 'Whether this product is visible to all sectors in the new sector-based visibility model',
         default: true,

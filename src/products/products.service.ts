@@ -48,9 +48,13 @@ export class ProductsService {
           allowedSectorIds: productDetails.allowedSectorIds,
         });
       const { allowAllSectors, allowedSectorIds } = visibilityConfig;
+      const allowBoxes = Boolean(productDetails.allowBoxes);
+      const onlyBoxes = Boolean(productDetails.onlyBoxes);
 
       const product = this.productRepository.create({
         ...productDetails,
+        allowBoxes: allowBoxes || onlyBoxes,
+        onlyBoxes,
         allowAllSectors,
         allowedSectorIds,
         images: images.map((image) =>
@@ -235,6 +239,11 @@ export class ProductsService {
 
   async update(id: string, updateProductDto: UpdateProductDto, user: User) {
     const { images, ...toUpdate } = updateProductDto;
+    if (toUpdate.onlyBoxes === true) {
+      toUpdate.allowBoxes = true;
+    } else if (toUpdate.allowBoxes === false) {
+      toUpdate.onlyBoxes = false;
+    }
 
     const product = await this.productRepository.preload({ id, ...toUpdate });
 

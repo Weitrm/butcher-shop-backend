@@ -159,6 +159,12 @@ export class CreateOrderUseCase {
         );
       }
 
+      if (product.onlyBoxes && !item.isBox) {
+        throw new BadRequestException(
+          `El producto ${product.title} solo permite pedidos por caja`,
+        );
+      }
+
       if (product.stock < item.kg) {
         throw new BadRequestException(
           `Stock insuficiente para ${product.title}`,
@@ -173,7 +179,7 @@ export class CreateOrderUseCase {
       return {
         product,
         kg: item.kg,
-        isBox: Boolean(item.isBox && product.allowBoxes),
+        isBox: Boolean(product.onlyBoxes || (item.isBox && product.allowBoxes)),
         unitPrice,
         subtotal,
       };
