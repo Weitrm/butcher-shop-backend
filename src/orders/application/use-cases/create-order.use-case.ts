@@ -24,6 +24,9 @@ import { ProductReadRepository } from '../../domain/repositories/product-read.re
 import { UserReadRepository } from '../../domain/repositories/user-read.repository';
 import { WeeklyOrderExceptionReadRepository } from '../../domain/repositories/weekly-order-exception-read.repository';
 
+const BOX_ORDER_RESTRICTION_MESSAGE =
+  'Los pedidos con caja deben ser de 1 caja de un solo producto.';
+
 @Injectable()
 export class CreateOrderUseCase {
   private readonly logger = new Logger('CreateOrderUseCase');
@@ -171,19 +174,25 @@ export class CreateOrderUseCase {
         );
       }
 
+      const effectiveIsBox = Boolean(product.onlyBoxes || (item.isBox && product.allowBoxes));
+
       totalKg += item.kg;
       const unitPrice = product.price;
-      const subtotal = unitPrice * item.kg;
+      const subtotal = effectiveIsBox ? 0 : unitPrice * item.kg;
       totalPrice += subtotal;
 
       return {
         product,
         kg: item.kg,
-        isBox: Boolean(product.onlyBoxes || (item.isBox && product.allowBoxes)),
+        isBox: effectiveIsBox,
         unitPrice,
         subtotal,
       };
     });
+    const boxItems = orderItems.filter((item) => item.isBox);
+    if (boxItems.length > 0 && (orderItems.length > 1 || boxItems[0].kg !== 1)) {
+      throw new BadRequestException(BOX_ORDER_RESTRICTION_MESSAGE);
+    }
 
     if (
       !isSuperUser &&
